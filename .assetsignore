@@ -1,0 +1,37 @@
+# Files/dirs NOT to upload as static assets (gitignore syntax, relative to assets directory).
+.git
+.claude
+node_modules
+wrangler.jsonc
+.assetsignore
+worker
+train
+test
+assets/cards/_qc
+*.log
+*.md
+serve.py
+
+# never publish: wrangler scratch (its deploy source maps), git housekeeping, and the local-only
+# experimental AlphaZero weights (23 MB; the online "AlphaZero(实验)" seat intentionally falls back to the heuristic)
+.wrangler
+.gitignore
+.gitattributes
+*.map
+assets/policy.json
+_rep_*.json
+
+# Security: never publish local secrets or deployment metadata.
+**/.git
+**/.hg
+**/.svn
+**/.env*
+**/.dev.vars*
+**/.aws
+**/.docker
+**/.wrangler
+**/node_modules
+**/.DS_Store
+wrangler.jsonc
+wrangler.json
+wrangler.toml

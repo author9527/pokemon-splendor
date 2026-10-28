@@ -1,0 +1,17 @@
+node_modules/
+.DS_Store
+*.log
+assets/policy.json
+
+.claude/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+_rep_*.json
+
+# mobile UX audit screenshots (dev tool output)
+test/_ux_audit/

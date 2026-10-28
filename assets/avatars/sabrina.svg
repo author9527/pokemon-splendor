@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 娜姿（超能力馆主）通用徽章：紫罗兰基调 + 超能力之眼，不涉及角色肖像 -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="70%">
+      <stop offset="0%" stop-color="#7b5bd6"/>
+      <stop offset="100%" stop-color="#3a2a78"/>
+    </radialGradient>
+    <radialGradient id="eye" cx="50%" cy="42%" r="60%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d9c8ff"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="62" fill="url(#bg)"/>
+  <circle cx="64" cy="64" r="58" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3"/>
+  <circle cx="64" cy="64" r="44" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2" stroke-dasharray="6 6"/>
+  <!-- 超能力之眼 -->
+  <path d="M36 70 C52 44 76 44 92 70 C76 58 52 58 36 70 Z" fill="#2a1c5e"/>
+  <circle cx="64" cy="64" r="11" fill="url(#eye)"/>
+  <circle cx="64" cy="64" r="5" fill="#2a1c5e"/>
+  <!-- 睫毛 -->
+  <path d="M38 68 L46 62 M90 68 L82 62" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+</svg>

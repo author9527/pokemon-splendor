@@ -1,0 +1,114 @@
+# 璀璨宝石 · 宝可梦（Pokémon Splendor）
+
+一个可在浏览器中直接游玩的《璀璨宝石：宝可梦》网页版 —— 收集精灵球，捕捉并**进化**宝可梦，率先达到 **18 分**成为冠军训练家。
+
+支持 **2–4 人本地热座**（pass-and-play）、**电脑对手**（新手 / 普通 / 高手 / 究极四档）与**在线联机对战**（房间码 + 邀请链接）。另含两套可选**扩展**（超级进化 Megas、PokéMart 商店）、零基础**新手教程**、**Mega 教程**与覆盖 6 种道具的**PokéMart 互动教程**。
+
+> 卡牌美术与数值均源自 Tabletop Simulator 模组「**璀璨宝石：宝可梦（自动脚本）**」。由于模组只把分值写进卡面，本项目用视觉识别从 100 张原始卡面逐张提取了：捕捉成本、折扣球、奖杯点数、进化目标与进化花费，并经二次复核 + 标签交叉校验。
+
+## 直接游玩
+
+双击打开 `index.html` 即可（纯静态，无需服务器）。
+若浏览器对本地文件有跨域限制，用任意静态服务器起一个本地服务：
+
+```bash
+# 任选其一（在本目录下执行）
+python -m http.server 8000
+npx serve .
+```
+
+然后访问 http://localhost:8000 。
+
+刷新或退出后，开局界面会提供「▶ 继续上一局」——每个回合边界都会把对局快照存到 `localStorage`。
+
+## 在线联机对战
+
+点开局界面的 **🌐 创建联机房间** 生成一个房间码（可「复制邀请链接」分享），其他玩家用 **🔗 加入房间** 输入房间码即可入座；房主（第一个进房的人）点「开始游戏」发牌。
+
+- **服务器权威**：每一步都在服务端用引擎校验（座位即所有权），每个客户端只收到对自己**脱敏**后的状态（看不到牌堆顺序与对手保留牌）。
+- **断线重连**：身份用本地 token 绑定座位，刷新 / 掉线后用同一浏览器重连即可复位座位与隐藏手牌。
+- **连接恢复**：切回前台会同步进度；心跳或操作确认超时后自动恢复连接。同步完成前暂停操作，避免重复提交；也可点击「立即重连」。离开房间会关闭连接，邀请链接可用于重新加入。
+- **超时代打**：某玩家超过 **3 分钟**未行动，房主的「研究级 AI」会仅凭公共信息接管该回合，避免卡局。
+
+联机依赖一个 Cloudflare Worker（见下「部署」），纯静态托管（如 GitHub Pages）只能单机热座 + AI，无法联机。
+
+## 玩法要点
+
+- **6 种精灵球**：精灵球(红)、超级球(蓝)、高级球(黑)、治愈球(粉)、先机球(黄)，以及 **大师球(紫)**——万能球。
+- **每回合三选一**：① 拿 3 个不同色；② 拿 2 个同色（该色 ≥4 时）；③ 保留 1 张普通宝可梦并获得 1 个大师球（手牌上限 3）。
+- **捕捉**：支付卡面左下角成本（已捕捉宝可梦右上角的球是永久折扣）。**稀有 / 传说**必须使用大师球，且各提供 2 个折扣。
+- **进化（回合结束，非行动）**：若已捕捉宝可梦的进化形出现在场上或你的手牌中，且你**已捕捉宝可梦提供的折扣球（卡面右上角）**满足卡面顶部的进化花费，即可进化——**只看折扣球，不消耗你手中的精灵球**。用进化形替换原卡，原卡移到训练板下方（不再计分/折扣）。每回合至多 1 次。
+- **精灵球上限 10**；某玩家达 **18 分**后本轮结束，分高者胜（平局比进化数，再比场上宝可梦数）。
+
+## 可选扩展
+
+开局界面勾选即可启用（可组合）：
+
+- **超级进化（Megas）**：第 4 级 Mega 卡 + Mega 代币。胜利改为需 **20 分 + 集齐每色 + 至少 1 只 Mega**。
+- **PokéMart 商店**：每级额外展示 2 张道具。药水提供双折扣，技能机复制折扣，图鉴可抵款，神奇糖果与进化石可免费连锁取卡，驱虫喷雾可弃卡换分。
+
+## 项目结构
+
+```
+index.html          入口
+css/style.css       样式（含 CSS 绘制的精灵球 / 动画 / 联机大厅）
+js/engine.js        纯逻辑游戏引擎（规则 / 进化 / 计分 / 脱敏 / 合法动作），浏览器与 Node 通用
+js/ai.js            电脑对手（完整扩展行动规划 + 公共信息采样 + 路线/威胁/进化决策）
+js/vsearch.js       「究极」难度：可复现的信息集 MCTS（仅 2 人，极高分支时自适应回退）
+js/cards.js         卡牌数据库（自动生成，勿手改）
+js/megas.js         超级进化扩展 · js/pokemart.js  PokéMart 商店扩展
+js/net.js           联机客户端传输（window.Net：WebSocket + 心跳 + token 重连）
+js/room.js          联机房间权威（纯逻辑，浏览器与 Node 通用，可 headless 单测）
+js/tutorial.js      基础 / Mega / PokéMart 三套交互教程
+js/ui.js            界面与交互
+worker/index.js     Cloudflare Worker 入口 + 每房间一个 Durable Object（仅加传输，规则全在 room.js）
+data/cards.json     卡牌数据库（供 Node 测试）· data/megas.json · data/pokemart.json
+assets/cards/       100 张基础卡面 + 30 张 PokéMart 卡面 + 牌背
+manifest.json sw.js PWA 清单与离线缓存
+test/               Node 单元测试（引擎 / AI / 扩展 / 联机房间）
+wrangler.jsonc      Cloudflare 部署配置（静态资源 + Durable Object + 自定义域名）
+```
+
+## 开发与测试
+
+```bash
+node test/engine.test.js   # 引擎规则 + 100 局自走验证（含计分/进化/结束/筹码守恒/脱敏）
+node test/ai.test.js       # AI 强度（对贪心基线胜率）/ 终局 / 延迟
+node test/ai_expansions.test.js # PokéMart/Mega AI、暗牌公平性、搜索稳定性
+node test/room.test.js     # 联机房间权威（座位/脱敏/重连/持久化/超时代打）
+node test/megas.test.js    # 超级进化扩展
+node test/pokemart.test.js # PokéMart 商店扩展
+node test/tutorial_layout.test.js # 新手教程气泡布局（永不遮挡行动栏/目标）
+python test/mobile_ux_audit.py     # 手机/小屏/横屏 UX 审计（playwright 截图 + 遮挡/溢出/点击目标检测，用法见文件头）
+```
+
+移动端教程回归（需要 Python Playwright 及对应浏览器）：在仓库目录启动
+`python -m http.server 8765 --bind 127.0.0.1`，另一个终端执行
+`python test/tutorial_mobile.test.py chromium` 或 `python test/tutorial_mobile.test.py webkit`。
+测试会实际触摸选球、检查确认按钮命中、缩小视口、继续教程，并验证退出后重新进入。
+截图保存在 `test/_ux_audit/`。桌面浏览器模拟不能替代 iPhone 微信真机复测。
+`python test/tutorial_actions.test.py` 另外验证桌面、手机与横屏商店教程：卡牌 → 购买按钮的
+高亮切换、结束回合提示、可展开规则及关联卡弹窗（Chromium / WebKit）。
+
+联机身份回归：`node test/room.test.js`、`node test/net_identity.test.js`、
+`node test/worker_identity.test.js`。最后一项使用内存存储和模拟 WebSocket 检查真实 Worker
+消息处理器的休眠恢复逻辑，不替代 Cloudflare 环境集成测试。
+启动上述本地服务器后，`python test/ui_names.test.py` 验证昵称和日志不会被解析为 HTML。
+
+联机端到端回归需启动真实本地 Worker（普通静态服务器不支持 WebSocket）：
+`npx wrangler@4.129.1 dev --local --ip 127.0.0.1 --port 8765 --persist-to ../_local-state`。
+运行 `python test/online_flow.test.py`（可追加地址和 `webkit`）验证建房、电脑、座位随机、
+保留牌脱敏、观战、断网、刷新及退出；`python test/online_rematch.test.py` 走完合法对局，
+验证离线期间错过重开通知后的恢复。测试只使用自己创建的随机房间。
+`node test/net_recovery.test.js` 验证心跳、确认超时、旧连接事件、前后台与网络切换。
+
+## 部署
+
+- **纯静态**（单机热座 + AI）：任意静态托管即可（如 GitHub Pages），双击 `index.html` 同款。
+- **含联机**：用 Cloudflare Workers 部署（`npx wrangler deploy`）。`wrangler.jsonc` 已配置 ASSETS 静态资源绑定、`Room` Durable Object 与自定义域名；Worker 把 `/room/:code/ws` 路由到对应房间的 DO，其余路径回退静态资源。
+
+## 致谢
+
+- 桌游《Splendor / 璀璨宝石》设计：Marc André。
+- 宝可梦改版美术：TTS 社区模组「璀璨宝石：宝可梦」。
+- 宝可梦相关名称与形象版权归 Nintendo / Game Freak / The Pokémon Company 所有。本项目为非商业同人学习用途。
