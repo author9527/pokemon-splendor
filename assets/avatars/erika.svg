@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 莉佳（花语馆主）通用徽章：草绿基调 + 花朵，不涉及角色肖像 -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="70%">
+      <stop offset="0%" stop-color="#8bc34a"/>
+      <stop offset="100%" stop-color="#33691e"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="62" fill="url(#bg)"/>
+  <circle cx="64" cy="64" r="58" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3"/>
+  <circle cx="64" cy="64" r="44" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2" stroke-dasharray="6 6"/>
+  <!-- 五瓣花 -->
+  <g fill="#ffe082">
+    <ellipse cx="64" cy="42" rx="9" ry="14"/>
+    <ellipse cx="64" cy="42" rx="9" ry="14" transform="rotate(72 64 64)"/>
+    <ellipse cx="64" cy="42" rx="9" ry="14" transform="rotate(144 64 64)"/>
+    <ellipse cx="64" cy="42" rx="9" ry="14" transform="rotate(216 64 64)"/>
+    <ellipse cx="64" cy="42" rx="9" ry="14" transform="rotate(288 64 64)"/>
+  </g>
+  <circle cx="64" cy="64" r="10" fill="#e65100"/>
+  <!-- 叶片 -->
+  <path d="M30 92 C42 78 62 78 70 90 C58 96 44 98 30 92 Z" fill="#aed581"/>
+  <path d="M98 92 C86 78 66 78 58 90 C70 96 84 98 98 92 Z" fill="#7cb342"/>
+</svg>

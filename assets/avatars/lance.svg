@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 阿渡（龙系天王）通用徽章：宝蓝基调 + 龙首轮廓，不涉及角色肖像 -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="70%">
+      <stop offset="0%" stop-color="#4dd0e1"/>
+      <stop offset="100%" stop-color="#0d47a1"/>
+    </radialGradient>
+    <radialGradient id="eye" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#fff59d"/>
+      <stop offset="100%" stop-color="#f57f17"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="62" fill="url(#bg)"/>
+  <circle cx="64" cy="64" r="58" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3"/>
+  <circle cx="64" cy="64" r="44" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2" stroke-dasharray="6 6"/>
+  <!-- 龙首 -->
+  <path d="M34 72 C34 50 50 38 64 38 C78 38 94 50 94 72 L88 84 L74 74 L70 84 L58 84 L54 74 L40 84 Z" fill="#1565c0"/>
+  <!-- 龙角 -->
+  <path d="M50 40 L44 26 L58 36 M78 40 L84 26 L70 36" stroke="#b3e5fc" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <!-- 龙眼 -->
+  <ellipse cx="52" cy="56" rx="6" ry="7" fill="url(#eye)"/>
+  <ellipse cx="76" cy="56" rx="6" ry="7" fill="url(#eye)"/>
+  <circle cx="52" cy="56" r="3" fill="#0d47a1"/>
+  <circle cx="76" cy="56" r="3" fill="#0d47a1"/>
+  <!-- 鼻翼 -->
+  <path d="M60 66 L68 66" stroke="#b3e5fc" stroke-width="3" stroke-linecap="round"/>
+</svg>

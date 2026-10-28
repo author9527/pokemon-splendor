@@ -24,6 +24,7 @@
   let handshake = null, replyTimer = null, pongTimer = null;
   const handlers = {};
   const sessionTokens = new Map();
+  const peekWaiters = new Map();   // seq → {resolve, timer}（潮汐预读联机 peek 请求）
 
   function on(ev, fn) { handlers[ev] = fn; }
   function emit(ev, data) { if (handlers[ev]) { try { handlers[ev](data); } catch (e) { console.error('Net handler', ev, e); } } }
@@ -109,6 +110,11 @@
       if (!m || typeof m.t !== 'string') return;
       clearTimeout(pongTimer); pongTimer = null;
       if (m.t === 'pong') return;
+      if (m.t === 'peekResult') {
+        const w = peekWaiters.get(m.seq);
+        if (w) { clearTimeout(w.timer); peekWaiters.delete(m.seq); w.resolve(m); }
+        return;
+      }
       if (m.t === 'welcome') joined = true;
       // A socket being open does not mean the player's state is synchronized.
       if (joined && (m.t === 'state' || (m.t === 'roster' && !m.started))) {
@@ -147,6 +153,17 @@
     return ok;
   }
   function action(move) { return send({ t: 'action', seq: ++seq, action: move }); }
+  // 潮汐预读（小霞）联机 peek：请求服务器计算"预留完成后"牌堆顶 ≤4 张，只回给请求者。
+  // 超时/断线返回 null（UI 回退为普通保留）。
+  function peek(target) {
+    if (!ready) return Promise.resolve(null);
+    const s = ++seq;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { peekWaiters.delete(s); resolve(null); }, 6000);
+      peekWaiters.set(s, { resolve, timer });
+      if (!raw({ t: 'peek', seq: s, target })) { clearTimeout(timer); peekWaiters.delete(s); resolve(null); }
+    });
+  }
   function start(opts) { return send({ t: 'start', opts: opts || {} }); }
   function sync() {
     if (!joined || !ws || ws.readyState !== 1) return false;
@@ -179,7 +196,7 @@
     }
   });
 
-  const api = { connect, on, send, action, start, sync, setName, rematch, rejoin, retry, addAI, removeAI, setAILevel, shuffle, close, parseRoomCode,
+  const api = { connect, on, send, action, peek, start, sync, setName, rematch, rejoin, retry, addAI, removeAI, setAILevel, shuffle, close, parseRoomCode,
                 isOpen: () => ready && !!(ws && ws.readyState === 1) };
   if (typeof window !== 'undefined') window.Net = api;
   // 纯函数部分（parseRoomCode）可被 Node 测试直接 require；其余函数依赖浏览器 API。

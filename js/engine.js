@@ -62,20 +62,26 @@
   // 每位训练家一个共同技能 + 专属技能，在行动流程内部结算（引擎权威）。技能规则：
   //   共同技能「开局宝可梦」: 开局视为已有一只对应色宝可梦（+1 对应色奖励，
   //     捕捉支付与进化判定时自动抵扣；start 字段为对应色）。
-  //   ash    精灵之心 : 保留宝可梦时额外获得 1 个大师球（合计 2 个，供应允许时）
-  //   misty  潮汐祝福 : 拿取异色精灵球时可拿 4 个（需 4 种颜色供应充足）
-  //   brock  岩石意志 : 拿取同色精灵球时可拿 3 个（该色供应 ≥ 3）
-  //   rocket 捕获装置 : 本回合捕捉宝可梦后，回合结束时获得 1 个大师球（未满 10 球时）
-  //   sabrina 意念成球 : 支付时可用任意 2 颗普通球换算 1 颗大师球（每回合限 1 次，整局限 2 次）
-  //   sabrina 大师馈赠 : 自己回合内消耗 2 颗同色精灵球，赠送 1 个大师球给任意其他玩家
-  //                     （整局限 1 次，不占用主行动）
+  //   ash      羁绊进化 : 进化缺口 X 个指定颜色图标时，可支付该色 2X 颗补足完成进化
+  //           热血成长 : 2 级卡面分数 +1，3 级卡面分数 +2
+  //   misty    潮汐预读 : 保留时可放弃大师球，改为查看该等级牌堆顶 4 张自主重排并拿 1 颗蓝球
+  //           蓝球调色 : 支付时蓝球可当作任意非大师球使用
+  //   erika    花语采集 : 拿取 2 同色时可额外拿 1 颗异色非大师球
+  //   giovanni 威压 : 支付 1 球在对方精灵卡上作标记，该精灵进化前需先支付 1 颗同色球清除
+  //           肃清 : 支付目标卡捕捉成本 + 2 大师球，将其移除游戏（对方获 2 大师球补偿）
+  //   sabrina  超能转换 : 每回合限 1 次，支付 3 颗任意精灵球获得 1 颗大师球
+  //           精神压制 : 非大师球 ≥4 时发动，弃置自己全部非大师球（N），并从其他玩家
+  //                     合计弃置 N-1/N/11（N=4-6/7-9/10）颗非大师球到公共池
+  //   lance    龙之怒 : 支付时 2 颗同色非大师球可视为 1 颗大师球（仅满足大师球需求）
+  //           快龙降临 : 获得稀有/传说精灵时任意领取 1 颗非大师球
   // 元数据在 js/trainers.js；引擎只认 id。
   const TRAINER_SKILLS = {
-    ash:     { name: '精灵之心', start: 'red' },     // 开局红色宝可梦
-    misty:   { name: '潮汐祝福', start: 'blue' },    // 开局蓝色宝可梦
-    brock:   { name: '岩石意志', start: 'yellow' },  // 开局黄色宝可梦
-    rocket:  { name: '捕获装置', start: 'black' },   // 开局黑色宝可梦
-    sabrina: { name: '意念成球', start: 'pink' },    // 开局粉色宝可梦
+    ash:      { name: '羁绊进化', start: 'red' },     // 开局红色宝可梦
+    misty:    { name: '潮汐预读', start: 'blue' },    // 开局蓝色宝可梦
+    erika:    { name: '花语采集', start: 'yellow' },  // 开局黄色宝可梦
+    giovanni: { name: '威压', start: 'black' },       // 开局黑色宝可梦
+    sabrina:  { name: '超能转换', start: 'pink' },    // 开局粉色宝可梦
+    lance:    { name: '龙之怒', start: 'blue' },      // 开局蓝色宝可梦
   };
   function skillOf(s, p) {
     if (!s.trainerSkillsEnabled || !p || !p.trainer) return null;
@@ -190,9 +196,8 @@
         trainer: (opts.trainers && opts.trainers[i]) || null, // 训练家技能扩展：训练师 id
         tokens: emptyTokens(),
         startBonus: {},            // 训练家技能·开局宝可梦：开局视为已拥有的对应色宝可梦奖励
-        sabrinaTurn: false,        // 意念成球：本回合是否已换算（每回合限 1 次）
-        sabrinaTotal: 0,           // 意念成球：整局已换算次数（整局限 2 次）
-        giveUsed: false,           // 大师馈赠：整局是否已赠送过（整局限 1 次）
+        psychicUsed: false,        // 娜姿·超能转换：本回合是否已使用（每回合限 1 次）
+        seals: [],                 // 坂木·威压：盖在【本玩家】场上精灵卡上的标记 [{cardId, color}]
         megaToken: 0, // Megas expansion: 0 or 1 held Mega token
         board: [],   // captured card ids currently in play (provide bonus + vp)
         buried: [],  // card ids under the tile (evolved away — no bonus/vp)
@@ -275,6 +280,14 @@
   function scoreOf(s, player) {
     let v = 0;
     for (const id of player.board) v += (s.byId[id].vp || 0);
+    // 热血成长（小智）：所有 2 级精灵卡面分数 +1、3 级精灵卡面分数 +2
+    if (skillOf(s, player) === 'ash') {
+      for (const id of player.board) {
+        const t = s.byId[id].tier;
+        if (t === 'stage2') v += 1;
+        else if (t === 'stage3') v += 2;
+      }
+    }
     return v;
   }
   function locateCard(s, id) {
@@ -303,49 +316,64 @@
   // ----------------------- payment computation -----------------------
   // Compute how to pay for a card given current bonuses & tokens.
   // Returns {ok, pay:{tokens spent}, error}. `pay` includes purple (master).
+  // 技能被动（结算于支付计算内）：
+  //   蓝球调色（小霞）: 蓝球可当作任意非大师球使用（补任意普通色缺口）
+  //   龙之怒（阿渡）  : 2 颗同色非大师球可视为 1 颗大师球，仅用于满足大师球需求
+  //                     （不能替代普通颜色需求）
   function computePayment(s, player, card, extraMaster) {
     extraMaster = extraMaster || 0; // virtual master balls from discarded POKÉDEX cards
     const sk = skillOf(s, player);
-    // 意念成球：任意 2 颗普通球可换算为 1 颗大师球（每回合限 1 次，整局限 2 次）
-    const wildTwo = sk === 'sabrina' && !player.sabrinaTurn && (player.sabrinaTotal || 0) < 2;
     const b = bonuses(s, player);
     const pay = emptyTokens();
-    const purpleBudget = player.tokens.purple + extraMaster;
-    let masterNeeded = card.cost.purple || 0; // mandatory master (rare/legend)
-    if (!wildTwo && masterNeeded > purpleBudget) return { ok: false, error: '大师球不足' };
+    // --- 普通色需求：先同色球，再（小霞）蓝球调色补任意缺口 ---
     for (const c of COLORS) {
       const need = Math.max(0, (card.cost[c] || 0) - b[c]);
-      const useGem = Math.min(need, player.tokens[c]);
-      pay[c] = useGem;
-      masterNeeded += (need - useGem);
+      pay[c] = Math.min(need, player.tokens[c]);
     }
-    let converted = 0;
-    if (masterNeeded > purpleBudget) {
-      if (!wildTwo) return { ok: false, error: '精灵球不足（含大师球替代）' };
-      // 意念成球：用「未参与配色支付的」普通球，2 颗换 1 颗大师球
-      let ordinary = 0;
-      for (const c of COLORS) ordinary += (player.tokens[c] - pay[c]);
-      const deficit = masterNeeded - purpleBudget;
-      if (deficit > 1) return { ok: false, error: '意念成球每回合最多换算 1 颗大师球' };
-      if (Math.floor(ordinary / 2) < deficit) return { ok: false, error: '精灵球不足（含意念成球换算）' };
-      converted = deficit;
-      let needConv = deficit * 2;
+    let paintedBlue = 0; // 蓝球调色：蓝球以其他颜色身份支付的颗数
+    if (sk === 'misty') {
+      let surplus = Math.max(0, player.tokens.blue - pay.blue); // 蓝球用于蓝色需求后的盈余
+      for (const c of COLORS) {
+        if (surplus <= 0) break;
+        const gap = Math.max(0, (card.cost[c] || 0) - b[c]) - pay[c];
+        const fill = Math.min(gap, surplus);
+        if (fill > 0) { pay[c] += fill; surplus -= fill; paintedBlue += fill; }
+      }
+      // 蓝球盈余仍未被用于补缺口 → 真实需求不足以消耗，蓝球少付（pay.blue 已按需计）
+    }
+    // --- 大师球需求：真实大师球优先满足紫色需求；龙之怒补紫色缺口 ---
+    const purpleNeed = card.cost.purple || 0;   // mandatory master (rare/legend)
+    const realPurple = player.tokens.purple + extraMaster; // 真实大师球（万能）
+    const purplePaidByReal = Math.min(realPurple, purpleNeed);
+    const purpleShort = purpleNeed - purplePaidByReal;
+    let dragonConverted = 0; // 龙之怒换算的虚拟大师球数
+    if (purpleShort > 0) {
+      if (sk !== 'lance') return { ok: false, error: '大师球不足' };
+      // 龙之怒：2 颗同色非大师球 → 1 颗大师球（仅满足大师球需求）
+      let pairs = 0;
+      for (const c of COLORS) pairs += Math.floor(Math.max(0, player.tokens[c] - pay[c]) / 2);
+      if (pairs < purpleShort) return { ok: false, error: '大师球不足（龙之怒需同色对）' };
+      dragonConverted = purpleShort;
+      let needConv = purpleShort * 2;
       for (const c of COLORS) {
         if (needConv <= 0) break;
-        const take = Math.min(player.tokens[c] - pay[c], needConv);
+        const take = Math.min(Math.floor((player.tokens[c] - pay[c]) / 2) * 2, needConv);
         pay[c] += take; needConv -= take;
       }
-      pay.purple = player.tokens.purple; // 真实大师球全数付出（虚拟大师球优先消耗）
-    } else {
-      pay.purple = Math.max(0, masterNeeded - extraMaster);
     }
-    const virtualMaster = Math.min(extraMaster, masterNeeded);
-    return { ok: true, pay, virtualMaster, converted };
+    // 普通色缺口：由剩余真实大师球替代（大师球万能，龙之怒虚拟球不能用于普通缺口）
+    let ordinaryGap = 0;
+    for (const c of COLORS) ordinaryGap += Math.max(0, (card.cost[c] || 0) - b[c] - pay[c]);
+    const remainingReal = realPurple - purplePaidByReal;
+    if (ordinaryGap > remainingReal) return { ok: false, error: '精灵球不足（含大师球替代）' };
+    pay.purple = purplePaidByReal + Math.min(remainingReal, ordinaryGap);
+    const virtualMaster = Math.min(extraMaster, purplePaidByReal + Math.min(remainingReal, ordinaryGap));
+    return { ok: true, pay, paintedBlue, dragonConverted, virtualMaster };
   }
   function canAfford(s, player, card) { return computePayment(s, player, card).ok; }
 
   // Per-colour breakdown of a purchase, purely for display. Mirrors
-  // computePayment's gold-minimising logic so the UI can show, for each colour:
+  // computePayment's logic so the UI can show, for each colour:
   //   required     = balls printed on the card cost
   //   bonusCovered = covered for free by permanent bonuses (no token spent)
   //   paidColor    = matching coloured tokens you hand back to the supply
@@ -355,14 +383,19 @@
     const cp = computePayment(s, player, card, extraMaster);
     if (!cp.ok) return null;
     const b = bonuses(s, player);
+    const sk = skillOf(s, player);
     const rows = [];
     for (const c of COLORS) {
       const required = card.cost[c] || 0;
-      if (required === 0) continue;
+      if (required === 0 && cp.pay[c] === 0) continue;
       const bonusCovered = Math.min(required, b[c]);
       const remaining = required - bonusCovered;
-      const paidColor = Math.min(remaining, player.tokens[c]);
-      rows.push({ color: c, required, bonusCovered, paidColor, paidWild: remaining - paidColor });
+      const paidColor = Math.min(remaining, cp.pay[c]);
+      rows.push({
+        color: c, required, bonusCovered, paidColor,
+        paidWild: Math.max(0, remaining - paidColor),
+        painted: (sk === 'misty' && c !== 'blue') ? Math.max(0, cp.pay[c] - Math.min(remaining, player.tokens[c])) : 0,
+      });
     }
     const mandatoryMaster = card.cost.purple || 0; // purple pips printed on rare/legend
     return {
@@ -370,7 +403,7 @@
       mandatoryMaster,
       master: cp.pay.purple,                // real Master Balls spent from your stash
       virtualMaster: cp.virtualMaster || 0, // Master "balls worth" from discarded POKÉDEX
-      converted: cp.converted || 0,         // 意念成球：以 2 普通球换算的大师球数
+      dragonConverted: cp.dragonConverted || 0, // 龙之怒：2 同色普通球换算的大师球数
     };
   }
 
@@ -397,26 +430,28 @@
     const sk = skillOf(s, p);
     const uniq = new Set(colors);
     let mode;
-    // 岩石意志（小刚）：3 个同色（该色供应 ≥ 3）
-    if (colors.length === 3 && uniq.size === 1 && sk === 'brock') {
-      mode = 'triple';
-      const c = colors[0];
-      if (s.supply[c] < 3) return { ok: false, error: '该颜色少于3个，不能拿三个' };
+    // 花语采集（莉佳）：拿取 2 个同色时可额外拿取 1 个不同色非大师球（[c,c,d]）
+    if (colors.length === 3 && uniq.size === 2 && sk === 'erika') {
+      const cnt = {};
+      colors.forEach(c => cnt[c] = (cnt[c] || 0) + 1);
+      const doubleColor = Object.keys(cnt).find(c => cnt[c] === 2);
+      const extraColor = Object.keys(cnt).find(c => cnt[c] === 1);
+      if (!doubleColor || !extraColor) return { ok: false, error: '花语采集需 2 个同色 + 1 个不同色' };
+      mode = 'doublePlus';
+      if (s.supply[doubleColor] < 2) return { ok: false, error: '该颜色不足 2 个，不能拿两个' };
+      if (s.supply[extraColor] < 1) return { ok: false, error: '额外拿取的颜色供应不足' };
     } else if (colors.length === 2 && uniq.size === 1) {
       mode = 'double';
       const c = colors[0];
       if (s.supply[c] < 4) return { ok: false, error: '该颜色少于4个，不能拿两个' };
-    } else if (uniq.size === colors.length && colors.length <= (sk === 'misty' ? 4 : 3)) {
-      mode = (sk === 'misty' && colors.length === 4) ? 'distinct4' : 'distinct';
+    } else if (uniq.size === colors.length && colors.length <= 3) {
+      mode = 'distinct';
       // Official rule: take 3 tokens of different types. Only when fewer than 3
       // colors remain available in the supply may you take fewer (2, or even 1).
-      // 潮汐祝福（小霞）：可选拿 4 种异色（需 ≥ 4 种颜色供应充足）。
       const availDistinct = COLORS.filter(col => s.supply[col] > 0).length;
-      const minTake = mode === 'distinct4' ? 4 : 3;
-      if (availDistinct >= minTake && colors.length !== minTake) {
-        return { ok: false, error: mode === 'distinct4' ? '必须拿取4种不同颜色的精灵球' : '必须拿取3种不同颜色的精灵球' };
+      if (availDistinct >= 3 && colors.length !== 3) {
+        return { ok: false, error: '必须拿取3种不同颜色的精灵球' };
       }
-      if (mode === 'distinct4' && availDistinct < 4) return { ok: false, error: '可拿取的异色不足4种' };
     } else {
       return { ok: false, error: '只能拿3种不同 或 2个同色' };
     }
@@ -426,13 +461,15 @@
     s.acted = true;
     s.passStreak = 0;                          // 有人真的行动了 → 清零和棋计数
     s.taken = colors.slice();
-    const skillTag = (mode === 'triple' || mode === 'distinct4') ? `（技能·${TRAINER_SKILLS[sk].name}）` : '';
+    const skillTag = (mode === 'doublePlus') ? `（技能·${TRAINER_SKILLS[sk].name}）` : '';
     log(s, `${p.name} 拿取 ${colors.map(zhBall).join('、')}${skillTag}`);
     return { ok: true };
   }
 
-  function actionReserve(s, target) {
+  function actionReserve(s, target, preview) {
     // target: {fromField:id} or {fromDeck:tier}
+    // preview: 潮汐预读（小霞）— {order:[id1..id4]} 按从上到下重排该等级牌堆顶 4 张；
+    //          放弃拿大师球，改为查看牌堆并拿 1 颗蓝球
     const p = activePlayer(s);
     if (s.acted) return { ok: false, error: '本回合已行动' };
     if (!target || typeof target !== 'object' || Array.isArray(target)) return { ok: false, error: '保留目标无效' };
@@ -440,10 +477,13 @@
     const sk = skillOf(s, p);
     let cardId = null, tier = null, slot = -1, fromDeck = false;
     const reservable = (t) => NORMAL_TIERS.includes(t) || (s.pokemartEnabled && PM_TIERS.includes(t));
+    const wantPreview = !!(preview && sk === 'misty');
+    let deckBefore = null; // 潮汐预读：改状态前的牌堆快照（校验失败时恢复）
     if (target.fromDeck) {
       tier = target.fromDeck;
       if (!reservable(tier)) return { ok: false, error: '稀有/传说不可保留' };
       if (!s.decks[tier].length) return { ok: false, error: '牌堆已空' };
+      if (wantPreview) deckBefore = s.decks[tier].slice();
       cardId = s.decks[tier].pop(); fromDeck = true;
     } else {
       cardId = target.fromField;
@@ -451,18 +491,36 @@
       if (loc.where !== 'field') return { ok: false, error: '该卡不在场上' };
       if (!reservable(loc.tier)) return { ok: false, error: '稀有/传说不可保留' };
       tier = loc.tier; slot = loc.slot;
+      if (wantPreview) deckBefore = s.decks[tier].slice();
     }
     p.reserve.push(cardId);
     if (!fromDeck) { s.field[tier][slot] = null; refill(s, tier); }
-    // gain a master ball if available
+    // gain a master ball if available; 潮汐预读（小霞）改拿蓝球 + 重排牌堆顶 4 张
     let got = '';
-    if (s.supply.purple > 0) { s.supply.purple--; p.tokens.purple++; got = ' 并获得1个大师球'; }
-    // 精灵之心（小智）：保留时额外获得 1 个大师球
-    if (sk === 'ash' && s.supply.purple > 0) { s.supply.purple--; p.tokens.purple++; got += ' 与技能·精灵之心的额外大师球'; }
+    if (wantPreview) {
+      const deck = s.decks[tier];
+      const top = deck.slice(-Math.min(4, deck.length));
+      const okOrder = Array.isArray(preview.order) && preview.order.length === top.length
+        && top.slice().sort().join(',') === preview.order.slice().sort().join(',');
+      if (!okOrder) {
+        // 回滚：恢复牌堆快照、场上槽位与预留区
+        s.decks[tier] = deckBefore;
+        if (!fromDeck) s.field[tier][slot] = cardId;
+        p.reserve.pop();
+        return { ok: false, error: '潮汐预读：牌堆顺序校验失败' };
+      }
+      const removed = deck.splice(deck.length - top.length, top.length);
+      for (const id of preview.order) deck.push(id); // order[0] 为新的最顶
+      if (s.supply.blue > 0) { s.supply.blue--; p.tokens.blue++; got = '，潮汐预读：查看牌堆顶并拿1个超级球'; }
+      else got = '，潮汐预读：查看牌堆顶（蓝球供应不足）';
+      log(s, `${p.name} 保留了${zhTier(tier)}宝可梦（潮汐预读）并重排牌堆顶${top.length}张${got}`);
+    } else {
+      if (s.supply.purple > 0) { s.supply.purple--; p.tokens.purple++; got = ' 并获得1个大师球'; }
+      log(s, `${p.name} 保留了一张${zhTier(tier)}宝可梦${fromDeck ? '（牌堆顶）' : ''}${got}`);
+    }
     s.acted = true;
     s.passStreak = 0;                          // 有人真的行动了 → 清零和棋计数
     s.acquiredThisTurn = true;                 // 拿到牌 = 有进展
-    log(s, `${p.name} 保留了一张${zhTier(tier)}宝可梦${fromDeck ? '（牌堆顶）' : ''}${got}`);
     return { ok: true, cardId };
   }
 
@@ -622,7 +680,11 @@
       freeSteps = fp.steps;
     }
 
-    payTokens(s, p, payment.pay);
+    // 虚拟大师球（图鉴）优先覆盖紫色支付：真实 purple 扣减 = pay.purple − virtualMaster
+    const realPay = Object.assign({}, payment.pay, {
+      purple: Math.max(0, (payment.pay.purple || 0) - (payment.virtualMaster || 0)),
+    });
+    payTokens(s, p, realPay);
     for (const pid of spend) discardFromBoard(s, p, pid); // virtual masters consumed
     takeFromSource(s, p, loc, fromReserve, cardId);
     p.board.push(cardId);
@@ -630,12 +692,25 @@
     s.acted = true;
     s.passStreak = 0;                          // 有人真的行动了 → 清零和棋计数
     s.acquiredThisTurn = true;                 // 买到牌 = 有进展
-    s.capturedThisTurn = true;                 // 训练家技能扩展：火箭队·捕获装置
+    s.capturedThisTurn = true;
     const extra = spend.length ? `，弃${spend.length}图鉴抵${spend.length * 2}万能` : '';
     const asc = assocColor ? `，关联${zhBall(assocColor)}` : '';
-    const convTag = payment.converted ? `，意念成球换算${payment.converted}个大师球（第${p.sabrinaTotal + 1}/2次）` : '';
-    if (payment.converted) { p.sabrinaTurn = true; p.sabrinaTotal = (p.sabrinaTotal || 0) + 1; }
-    log(s, `${p.name} 捕捉了 ${card.name}（${payDesc(payment.pay)}${extra}${asc}${convTag}）`);
+    const dragonTag = payment.dragonConverted ? `，龙之怒换算${payment.dragonConverted}个大师球` : '';
+    // 快龙降临（阿渡）：获得稀有/传说精灵时，任意领取 1 颗非大师球
+    let bless = '';
+    if (skillOf(s, p) === 'lance' && SPECIAL_TIERS.indexOf(card.tier) >= 0) {
+      let bc = (COLORS.indexOf(opts.blessColor) >= 0) ? opts.blessColor : null;
+      if (bc == null) { // 自动兜底：选供应最充足的颜色（人类 UI 会显式选择）
+        let best = COLORS[0], bs = -1;
+        for (const c of COLORS) if (s.supply[c] > bs) { bs = s.supply[c]; best = c; }
+        bc = best;
+      }
+      if (s.supply[bc] > 0) {
+        s.supply[bc]--; p.tokens[bc]++;
+        bless = `，快龙降临领取1个${zhBall(bc)}`;
+      }
+    }
+    log(s, `${p.name} 捕捉了 ${card.name}（${payDesc(payment.pay)}${extra}${asc}${dragonTag}${bless}）`);
     if (freeSteps && freeSteps.length) execFree(s, p, freeSteps);
     return { ok: true };
   }
@@ -647,7 +722,11 @@
   function evolutionOptions(s, player) {
     const opts = [];
     if (s.evolvedThisTurn) return opts; // only one evolution per turn
+    const sk = skillOf(s, player);
     const b = bonuses(s, player);
+    // 威压（坂木）：被标记的精灵无法进化，需先支付同色球清除标记
+    const sealedIds = {};
+    (player.seals || []).forEach(se => { sealedIds[se.cardId] = se; });
     // available evolution targets: field cards + this player's reserve
     const avail = [];
     for (const tier of FIELD_TIERS) s.field[tier].forEach((id, slot) => { if (id) avail.push({ id, where: 'field', tier, slot }); });
@@ -655,18 +734,32 @@
     for (const id of player.board) {
       const c = s.byId[id];
       if (!c.evolvesTo || !c.evoCost) continue;
-      // Affordability: evolution is paid ONLY by the discount balls on your
-      // captured cards (bonuses) — never by the balls you hold (tokens). You
-      // must already own enough discounts of the required color to cover the
-      // full evolution cost; nothing is spent.
-      if (b[c.evoCost.color] < c.evoCost.count) continue;
-      for (const a of avail) {
-        if (s.byId[a.id].name !== c.evolvesTo) continue;
-        opts.push({
-          fromId: id, toId: a.id,
-          color: c.evoCost.color, count: c.evoCost.count,
-          targetWhere: a.where,
-        });
+      if (sealedIds[id]) continue; // 被威压标记：无法进化
+      const gap = c.evoCost.count - (b[c.evoCost.color] || 0);
+      if (gap <= 0) {
+        // 正常进化：折扣球已满足
+        for (const a of avail) {
+          if (s.byId[a.id].name !== c.evolvesTo) continue;
+          opts.push({
+            fromId: id, toId: a.id,
+            color: c.evoCost.color, count: c.evoCost.count,
+            targetWhere: a.where,
+          });
+        }
+      } else if (sk === 'ash') {
+        // 羁绊进化（小智）：缺口 X 个指定颜色图标，可支付该色 2X 颗补足完成进化
+        const payCount = gap * 2;
+        if ((player.tokens[c.evoCost.color] || 0) >= payCount) {
+          for (const a of avail) {
+            if (s.byId[a.id].name !== c.evolvesTo) continue;
+            opts.push({
+              fromId: id, toId: a.id,
+              color: c.evoCost.color, count: c.evoCost.count, gap,
+              bond: true, payCount,
+              targetWhere: a.where,
+            });
+          }
+        }
       }
     }
     return opts;
@@ -678,8 +771,11 @@
     const cands = evolutionOptions(s, p).filter(o => o.fromId === fromId);
     const opt = (toId != null) ? cands.find(o => o.toId === toId) : cands[0];
     if (!opt) return { ok: false, error: '不满足进化条件' };
-    // No tokens are spent: evolution is paid entirely by the discounts on your
-    // captured cards (affordability already verified in evolutionOptions).
+    // 羁绊进化（小智）：缺口 X 个图标 → 实付该色 2X 颗精灵球补足
+    if (opt.bond) {
+      if ((p.tokens[opt.color] || 0) < opt.payCount) return { ok: false, error: '羁绊进化：精灵球不足' };
+      p.tokens[opt.color] -= opt.payCount; s.supply[opt.color] += opt.payCount;
+    }
     // move target out of field/reserve
     const loc = locateCard(s, opt.toId);
     if (loc.where === 'field') { s.field[loc.tier][loc.slot] = null; refill(s, loc.tier); }
@@ -691,7 +787,8 @@
     p.board.push(opt.toId);
     s.evolvedThisTurn = true;
     s.acquiredThisTurn = true;                 // 进化也拿了新牌 = 有进展
-    log(s, `${p.name} 将 ${s.byId[fromId].name} 进化为 ${s.byId[opt.toId].name}`);
+    const payNote = opt.bond ? `（羁绊进化支付${opt.payCount}个${zhBall(opt.color)}）` : '';
+    log(s, `${p.name} 将 ${s.byId[fromId].name} 进化为 ${s.byId[opt.toId].name}${payNote}`);
     return { ok: true, fromId, toId: opt.toId };
   }
 
@@ -784,23 +881,156 @@
     return { ok: true };
   }
 
-  // 大师馈赠（娜姿）：自己回合内消耗 2 颗同色精灵球，赠送 1 个大师球给任意其他玩家。
-  // 整局限 1 次；不占用主行动（s.acted 不变），主行动仍需完成。
-  function actionGiveMaster(s, targetIdx, color) {
+  // ----------------------- 训练家主动技能 -------------------------
+  // 主动技能均为免费动作（不占用主行动 s.acted），结算于引擎内。
+
+  // 超能转换（娜姿）：每个你的回合限 1 次。支付 3 颗任意精灵球，获得 1 颗大师球。
+  function actionPsychicConvert(s, colors) {
     const p = activePlayer(s);
     if (s.phase !== 'play') return { ok: false, error: '非行动阶段' };
-    if (skillOf(s, p) !== 'sabrina') return { ok: false, error: '仅娜姿可用（大师馈赠）' };
-    if (p.giveUsed) return { ok: false, error: '大师馈赠整局仅限 1 次' };
-    if (!COLORS.includes(color)) return { ok: false, error: '请选择一种普通精灵球颜色' };
-    if ((p.tokens[color] || 0) < 2) return { ok: false, error: `${zhBall(color)}不足 2 颗` };
+    if (skillOf(s, p) !== 'sabrina') return { ok: false, error: '仅娜姿可用（超能转换）' };
+    if (p.psychicUsed) return { ok: false, error: '超能转换每回合限用 1 次' };
+    if (!Array.isArray(colors) || colors.length !== 3) return { ok: false, error: '超能转换需选择 3 颗精灵球' };
+    for (const c of colors) if (!COLORS.includes(c)) return { ok: false, error: '只能支付普通精灵球' };
+    for (const c of colors) if ((p.tokens[c] || 0) < 1) return { ok: false, error: `没有足够的${zhBall(c)}` };
     if (s.supply.purple <= 0) return { ok: false, error: '大师球供应不足' };
-    if (!s.players[targetIdx] || targetIdx === p.id) return { ok: false, error: '目标无效（不能赠送给自己）' };
-    const target = s.players[targetIdx];
-    p.tokens[color] -= 2; s.supply[color] += 2;
-    s.supply.purple--; target.tokens.purple++;
-    p.giveUsed = true;
-    log(s, `${p.name} 使用技能·大师馈赠，消耗 2 颗${zhBall(color)}，赠送 1 个大师球给${target.name}`);
+    for (const c of colors) { p.tokens[c]--; s.supply[c]++; }
+    s.supply.purple--; p.tokens.purple++;
+    p.psychicUsed = true;
+    log(s, `${p.name} 使用技能·超能转换，支付 ${colors.map(zhBall).join('、')}，获得 1 个大师球`);
     return { ok: true };
+  }
+
+  // 精神压制（娜姿）：非大师球 ≥4 时发动。弃置自己所有非大师球（记 N），
+  // 并从其他玩家手中合计弃置 K 颗非大师球到公共池（K = N-1/N/11，N=4-6/7-9/10）。
+  // targets（可选）：[{toPlayer, color, count}] 显式分配；省略则引擎自动从其他
+  // 玩家持有最多的球开始弃。
+  function actionSuppress(s, targets) {
+    const p = activePlayer(s);
+    if (s.phase !== 'play') return { ok: false, error: '非行动阶段' };
+    if (skillOf(s, p) !== 'sabrina') return { ok: false, error: '仅娜姿可用（精神压制）' };
+    const mine = COLORS.filter(c => p.tokens[c] > 0);
+    const N = mine.reduce((a, c) => a + p.tokens[c], 0);
+    if (N < 4) return { ok: false, error: '精神压制需持有至少 4 颗非大师球' };
+    // 弃置自己全部非大师球 → 公共池
+    for (const c of mine) { s.supply[c] += p.tokens[c]; p.tokens[c] = 0; }
+    const K = N >= 10 ? 11 : (N >= 7 ? N : N - 1);
+    // 其他玩家可被弃的非大师球
+    const others = s.players.filter(x => x.id !== p.id);
+    const availOf = (pl) => COLORS.reduce((a, c) => a + Math.max(0, pl.tokens[c]), 0);
+    const totalAvail = others.reduce((a, pl) => a + availOf(pl), 0);
+    const Kp = Math.min(K, totalAvail);
+    let spent = 0;
+    if (Array.isArray(targets) && targets.length) {
+      for (const t of targets) {
+        if (!t || t.toPlayer === p.id) return { ok: false, error: '目标无效' };
+        const tp = s.players[t.toPlayer];
+        if (!tp) return { ok: false, error: '目标玩家无效' };
+        if (!COLORS.includes(t.color)) return { ok: false, error: '不能弃置大师球' };
+        if ((tp.tokens[t.color] || 0) < t.count) return { ok: false, error: '目标没有足够的球' };
+        spent += t.count;
+      }
+      if (spent > Kp) return { ok: false, error: '合计弃置数超过上限' };
+      for (const t of targets) { s.supply[t.color] += t.count; s.players[t.toPlayer].tokens[t.color] -= t.count; }
+    } else {
+      // 自动分配：从其他玩家持有最多的颜色开始弃，直至 Kp
+      const pool = [];
+      others.forEach(pl => COLORS.forEach(c => { if (pl.tokens[c] > 0) pool.push({ pl, c, n: pl.tokens[c] }); }));
+      pool.sort((a, b) => b.n - a.n);
+      for (const it of pool) {
+        if (spent >= Kp) break;
+        const take = Math.min(it.n, Kp - spent);
+        s.supply[it.c] += take; it.pl.tokens[it.c] -= take; spent += take;
+      }
+    }
+    const desc = spent ? `，从其他玩家合计弃置 ${spent} 颗` : '';
+    log(s, `${p.name} 使用技能·精神压制，弃置自己 ${N} 颗精灵球${desc}`);
+    return { ok: true, N, K: Kp };
+  }
+
+  // 威压（坂木）：支付 1 颗任意精灵球，盖在对方 1 张精灵卡上作标记；
+  // 该精灵进化前需先支付 1 颗同色精灵球清除标记。
+  function actionIntimidate(s, targetIdx, cardId, color) {
+    const p = activePlayer(s);
+    if (s.phase !== 'play') return { ok: false, error: '非行动阶段' };
+    if (skillOf(s, p) !== 'giovanni') return { ok: false, error: '仅坂木可用（威压）' };
+    if (!ALL_TOKENS.includes(color)) return { ok: false, error: '请选择一种精灵球' };
+    if ((p.tokens[color] || 0) < 1) return { ok: false, error: `没有足够的${zhBall(color)}` };
+    const tp = s.players[targetIdx];
+    if (!tp || targetIdx === p.id) return { ok: false, error: '目标无效' };
+    if (tp.board.indexOf(cardId) < 0) return { ok: false, error: '目标玩家场上没有该精灵' };
+    tp.seals = tp.seals || [];
+    if (tp.seals.some(se => se.cardId === cardId)) return { ok: false, error: '该精灵已被标记' };
+    p.tokens[color]--; s.supply[color]++;
+    tp.seals.push({ cardId, color });
+    log(s, `${p.name} 使用技能·威压，支付 1 个${zhBall(color)}，标记了 ${tp.name} 的 ${s.byId[cardId].name}`);
+    return { ok: true };
+  }
+
+  // 清除标记：被威压标记的玩家，在其回合内支付 1 颗同色精灵球移除标记。
+  function actionClearSeal(s, cardId) {
+    const p = activePlayer(s);
+    if (s.phase !== 'play') return { ok: false, error: '非行动阶段' };
+    const seals = p.seals || [];
+    const se = seals.find(x => x.cardId === cardId);
+    if (!se) return { ok: false, error: '该精灵未被标记' };
+    if ((p.tokens[se.color] || 0) < 1) return { ok: false, error: `需要 1 个${zhBall(se.color)}清除标记` };
+    p.tokens[se.color]--; s.supply[se.color]++;
+    p.seals = seals.filter(x => x.cardId !== cardId);
+    log(s, `${p.name} 支付 1 个${zhBall(se.color)}，清除了 ${s.byId[cardId].name} 上的威压标记`);
+    return { ok: true };
+  }
+
+  // 肃清（坂木）：指定对方 1 张精灵卡，支付其牌面捕捉成本（自己的折扣可抵扣普通球）
+  // + 额外 2 颗大师球（必须实付），将其移除游戏；对方获得 2 颗大师球补偿。
+  function actionPurge(s, targetIdx, cardId) {
+    const p = activePlayer(s);
+    if (s.phase !== 'play') return { ok: false, error: '非行动阶段' };
+    if (skillOf(s, p) !== 'giovanni') return { ok: false, error: '仅坂木可用（肃清）' };
+    const tp = s.players[targetIdx];
+    if (!tp || targetIdx === p.id) return { ok: false, error: '目标无效' };
+    if (tp.board.indexOf(cardId) < 0) return { ok: false, error: '目标玩家场上没有该精灵' };
+    const card = s.byId[cardId];
+    const pay1 = computePayment(s, p, card);       // 牌面成本（bonus 抵扣普通球）
+    if (!pay1.ok) return { ok: false, error: pay1.error };
+    if ((p.tokens.purple - pay1.pay.purple) < 2) return { ok: false, error: '额外 2 颗大师球必须实付' };
+    if (s.supply.purple < 2) return { ok: false, error: '大师球供应不足（需补偿目标 2 颗）' };
+    payTokens(s, p, pay1.pay);
+    p.tokens.purple -= 2; s.supply.purple += 2;   // 额外 2 颗大师球实付
+    s.supply.purple -= 2; tp.tokens.purple += 2;   // 补偿目标 2 颗大师球
+    // 移除游戏：从目标场上彻底移除（失去分数与折扣），不埋藏
+    tp.board.splice(tp.board.indexOf(cardId), 1);
+    if (tp.assoc) delete tp.assoc[cardId];
+    log(s, `${p.name} 使用技能·肃清，支付 ${payDesc(pay1.pay)}+2大师球，将 ${tp.name} 的 ${card.name} 移除游戏；${tp.name} 获得 2 颗大师球补偿`);
+    return { ok: true, cardId };
+  }
+
+  // 潮汐预读·预检（不改状态）：模拟"预留完成后"该等级牌堆的顶 4 张，
+  // 供 UI / 联机房间在玩家重排前安全地 peek。返回 {ok, cardId, tier, top}。
+  function actionReservePreview(s, target) {
+    const p = activePlayer(s);
+    if (!target || typeof target !== 'object' || Array.isArray(target)) return { ok: false, error: '保留目标无效' };
+    if (p.reserve.length >= HAND_MAX) return { ok: false, error: '保留区已满（最多3张）' };
+    const reservable = (t) => NORMAL_TIERS.includes(t) || (s.pokemartEnabled && PM_TIERS.includes(t));
+    if (target.fromDeck) {
+      const tier = target.fromDeck;
+      if (!reservable(tier)) return { ok: false, error: '稀有/传说不可保留' };
+      const deck = s.decks[tier];
+      if (!deck.length) return { ok: false, error: '牌堆已空' };
+      const cardId = deck[deck.length - 1]; // 预留的卡（将 pop）
+      const top = deck.slice(-Math.min(4, deck.length - 1)); // pop 后的顶 4 张
+      return { ok: true, cardId, tier, top };
+    }
+    const cardId = target.fromField;
+    const loc = locateCard(s, cardId);
+    if (loc.where !== 'field') return { ok: false, error: '该卡不在场上' };
+    if (!reservable(loc.tier)) return { ok: false, error: '稀有/传说不可保留' };
+    const tier = loc.tier;
+    const deck = s.decks[tier].slice();
+    let nulls = s.field[tier].reduce((a, x) => a + (x == null ? 1 : 0), 0) + 1; // +1 = 本卡槽将置空
+    const pops = Math.min(nulls, deck.length); // refill 将 pop 的张数
+    const top = deck.slice(Math.max(0, deck.length - pops - 4), deck.length - pops);
+    return { ok: true, cardId, tier, top };
   }
 
   // --------------------------- turn flow -----------------------------
@@ -820,11 +1050,6 @@
     const p = activePlayer(s);
     if (!s.acted) return { ok: false, error: '尚未行动' };
     if (needsDiscard(s, p)) return { ok: false, error: '请先归还多余精灵球（上限10）' };
-    // 捕获装置（火箭队）：本回合捕捉过宝可梦且未满 10 球 → 回合结束时获得 1 个大师球
-    if (s.capturedThisTurn && skillOf(s, p) === 'rocket' && s.supply.purple > 0 && tokenTotal(p) < TOKEN_MAX) {
-      s.supply.purple--; p.tokens.purple++;
-      log(s, `${p.name} 触发技能·捕获装置，获得 1 个大师球`);
-    }
     // check win trigger (someone reached the target this turn)
     if (winTriggered(s, p) && !s.lastRound) {
       s.lastRound = true;
@@ -861,7 +1086,7 @@
     s.turn = (s.turn + 1) % s.numPlayers;
     if (wasLastPlayer) s.round++;
     s.acted = false; s.taken = []; s.evolvedThisTurn = false; s.capturedThisTurn = false;
-    p.sabrinaTurn = false; // 意念成球：回合级限制随回合重置
+    p.psychicUsed = false; // 超能转换：回合级限制随回合重置
     return { ok: true };
   }
 
@@ -1032,21 +1257,17 @@
       for (let j = i + 1; j < avail.length; j++)
         for (let k = j + 1; k < avail.length; k++)
           acts.push({ type: 'take', colors: [avail[i], avail[j], avail[k]] });
-    // 潮汐祝福（小霞）：4 种不同颜色
-    if (sk === 'misty') {
-      for (let a = 0; a < avail.length; a++)
-        for (let b = a + 1; b < avail.length; b++)
-          for (let c = b + 1; c < avail.length; c++)
-            for (let d = c + 1; d < avail.length; d++)
-              acts.push({ type: 'take', colors: [avail[a], avail[b], avail[c], avail[d]] });
-    }
     // fewer-than-3 distinct only if <3 colors available
     if (avail.length === 2) acts.push({ type: 'take', colors: [avail[0], avail[1]] });
     if (avail.length === 1) acts.push({ type: 'take', colors: [avail[0]] });
-    // 2 same; 岩石意志（小刚）可 3 same（该色供应 ≥ 3）
+    // 2 same；花语采集（莉佳）可 2 同色 + 1 异色
     for (const c of COLORS) {
       if (s.supply[c] >= 4) acts.push({ type: 'take', colors: [c, c] });
-      if (sk === 'brock' && s.supply[c] >= 3) acts.push({ type: 'take', colors: [c, c, c] });
+      if (sk === 'erika' && s.supply[c] >= 2) {
+        for (const d of COLORS) {
+          if (d !== c && s.supply[d] > 0) acts.push({ type: 'take', colors: [c, c, d] });
+        }
+      }
     }
     // captures (field + own reserve), including one executable default choice
     // for every PokéMart effect. Strategic callers may expand more alternatives.
@@ -1088,13 +1309,17 @@
     switch (a.type) {
       case 'take':       return actionTake(s, a.colors);
       case 'capture':    return actionCapture(s, a.cardId, a.opts);
-      case 'reserve':    return actionReserve(s, a.target);
+      case 'reserve':    return actionReserve(s, a.target, a.preview);
       case 'takeMega':   return actionTakeMega(s);
       case 'evolve':     return actionEvolve(s, a.fromId, a.toId);
       case 'megaEvolve': return actionMegaEvolve(s, a.megaId, a.fromId);
       case 'discard':    return actionDiscard(s, a.color);
       case 'pass':       return actionPass(s);
-      case 'giveMaster': return actionGiveMaster(s, a.toPlayer, a.color);
+      case 'psychicConvert': return actionPsychicConvert(s, a.colors);
+      case 'suppress':   return actionSuppress(s, a.targets);
+      case 'intimidate': return actionIntimidate(s, a.toPlayer, a.cardId, a.color);
+      case 'clearSeal':  return actionClearSeal(s, a.cardId);
+      case 'purge':      return actionPurge(s, a.toPlayer, a.cardId);
       case 'endTurn':    return endTurn(s);
       default:           return { ok: false, error: '未知行动' };
     }
@@ -1154,7 +1379,8 @@
     createGame, activePlayer, bonusOf, bonuses, tokenTotal, scoreOf, locateCard, refill,
     computePayment, canAfford, paymentBreakdown,
     actionTake, actionReserve, actionCapture, actionEvolve, actionDiscard, actionPass,
-    actionGiveMaster, actionTakeMega, megaEvolveOptions, actionMegaEvolve, MEGA_TOKENS, MEGA_WIN_SCORE,
+    actionPsychicConvert, actionSuppress, actionIntimidate, actionClearSeal, actionPurge, actionReservePreview,
+    actionTakeMega, megaEvolveOptions, actionMegaEvolve, MEGA_TOKENS, MEGA_WIN_SCORE,
     PM_TIERS, PM_SLOTS, fieldTiers, isPokemart, effBonusColor, freeTiers, freeTakeable, autoCaptureOpts, CANON_SPECIAL,
     evolutionOptions, needsDiscard, turnState, endTurn, determineWinner,
     legalActions, applyAction, redactFor, clone,

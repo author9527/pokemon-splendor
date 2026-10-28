@@ -220,6 +220,7 @@
         case 'join':     return this.join(connId, msg.name, msg.token);
         case 'start':    return this._start(connId, msg.opts);
         case 'action':   return this._action(connId, msg);
+        case 'peek':     return this._peek(connId, msg);
         case 'takeover': return this._takeover(connId, msg);
         case 'name':     return this._rename(connId, msg.name);
         case 'rematch':  return this._rematch(connId);
@@ -395,6 +396,20 @@
       if (this.G.phase === 'gameover') this._broadcast({ t: 'over', winner: this.G.winner });
     }
 
+    // 潮汐预读·联机 peek（小霞技能2）：不改状态，只把"预留完成后该等级牌堆顶 ≤4 张"回给请求者。
+    // 非 mutating：不广播、不落盘，保证牌堆只对发动者可见。
+    _peek(connId, msg) {
+      const seat = this.conns[connId];
+      if (!this.started || seat == null || seat < 0) {
+        return this.send(connId, { t: 'peekResult', seq: msg && msg.seq, ok: false, error: '未入座或对局未开始' });
+      }
+      const r = E.actionReservePreview(this.G, msg.target);
+      return this.send(connId, {
+        t: 'peekResult', seq: msg && msg.seq, ok: !!r.ok,
+        cardId: r.cardId || null, top: r.top || [], error: r.error || null,
+      });
+    }
+
     // Is it a bot's turn right now? The transport polls this after every message and
     // schedules stepAI() with a human-readable delay.
     aiPending() {
@@ -465,6 +480,8 @@
     // something legal, and the turn always ends (a room must never stall).
     _applyPlan(seat, plan) {
       plan = plan || {};
+      // 训练家主动技能（免费动作）先行结算：娜姿·超能转换 / 坂木·威压 等
+      if (Array.isArray(plan.preSkills)) for (const pre of plan.preSkills) { try { E.applyAction(this.G, pre, seat); } catch (e) { } }
       // main action (the plan's pick, else any legal action, else a legitimate pass). Only MAIN
       // action types count here, and "acted" is read from the engine: a plan whose "action" is a
       // discard/evolve/endTurn used to count as acted — the turn then never ended, and a crafted

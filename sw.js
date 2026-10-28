@@ -1,10 +1,10 @@
 /* Pokémon Splendor — service worker (offline app shell + runtime card-image cache) */
-const VER = 'ps-cache-v19'; // 训练家技能 v3：开局宝可梦（奖励制）+ 意念成球限额 + 大师馈赠
+const VER = 'ps-cache-v20'; // 训练家技能 v4：六训练师（小智/小霞/莉佳/坂木/娜姿/阿渡）+ 主动技能
 const BALLS = ['red', 'blue', 'black', 'pink', 'yellow', 'purple'].map(c => `./assets/balls/${c}.png`);
 const BACKS = ['stage1', 'stage2', 'stage3', 'rare', 'legend'].map(t => `./assets/backs/${t}.webp`);
 BACKS.push('./assets/backs/pokemart-1.png', './assets/backs/pokemart-2.png', './assets/backs/pokemart-3.png');
 const AVATARS = ['ash', 'misty', 'brock', 'rocket'].map(a => `./assets/avatars/${a}.png`);
-AVATARS.push('./assets/avatars/sabrina.svg');
+AVATARS.push('./assets/avatars/sabrina.svg', './assets/avatars/erika.svg', './assets/avatars/giovanni.svg', './assets/avatars/lance.svg');
 const SHELL = [
   './', './index.html', './css/style.css',
   './js/cards.js', './js/megas.js', './js/pokemart.js', './js/trainers.js', './js/engine.js', './js/ai.js', './js/vsearch.js', './js/azai.js', './js/net.js', './js/ai.worker.js', './js/ui.js', './js/tutorial.js',

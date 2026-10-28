@@ -252,11 +252,13 @@
     for (let n = 0; n <= dex.length; n++) {
       const payment = E.computePayment(s, p, card, n * 2);
       if (!payment.ok) continue;
-      if (min < 0) { min = n; bestPurple = payment.pay.purple; plans.push(dex.slice(0, n)); continue; }
+      // 真实大师球消耗 = pay.purple 减去虚拟球覆盖的部分（图鉴丢弃产生的虚拟球会优先替付）
+      const realPurpleSpent = payment.pay.purple - (payment.virtualMaster || 0);
+      if (min < 0) { min = n; bestPurple = realPurpleSpent; plans.push(dex.slice(0, n)); continue; }
       // Do not guess the Mega route here: a free PokéMart chain may capture
       // the required base. captureActions verifies the complete simulated line.
-      if (canPreserveForMega && payment.pay.purple < bestPurple) {
-        plans.push(dex.slice(0, n)); bestPurple = payment.pay.purple;
+      if (canPreserveForMega && realPurpleSpent < bestPurple) {
+        plans.push(dex.slice(0, n)); bestPurple = realPurpleSpent;
       }
     }
     return min < 0 ? null : { plans, required: min };
@@ -534,14 +536,10 @@
     if (!a) return 0;
     const p = s.players[pid];
     if (a.type !== 'capture') {
-      // 训练家技能：小刚/小霞的技能拿取（3同色 / 4异色）比普通拿取多一球，轻微加成鼓励使用
+      // 训练家技能：莉佳·花语采集的 2 同色+1 异色拿取比普通拿取多一球，轻微加成鼓励使用
       if (a.type === 'take') {
         const sk = (E.skillOf && E.skillOf(s, p)) || null;
-        if (sk) {
-          const same3 = a.colors.length === 3 && new Set(a.colors).size === 1;
-          const four = a.colors.length === 4;
-          if ((sk === 'brock' && same3) || (sk === 'misty' && four)) return W.skillTake;
-        }
+        if (sk === 'erika' && a.colors.length === 3 && new Set(a.colors).size === 2) return W.skillTake;
       }
       return 0;
     }
@@ -662,16 +660,48 @@
     E._noise = null;
     if (!best) best = acts[0];
 
+    // 训练家主动技能（免费动作，不占用主行动）：
+    // - 娜姿·超能转换：非大师球 ≥6 且本回合未用时，用 3 颗盈余球换 1 大师球（高价值、无副作用）
+    // - 坂木·威压：有普通球且对方有场上精灵时，付 1 颗最弱球标记对方最高分精灵（低成本干扰）
+    // 其余主动技能（精神压制/肃清）代价大或副作用强，AI 默认不用。
+    const preSkills = [];
+    const pAI = s.players[pid];
+    const ask = (E.skillOf && E.skillOf(s, pAI)) || null;
+    if (ask === 'sabrina' && !pAI.psychicUsed && s.supply.purple > 0) {
+      const held = E.COLORS.filter(c => pAI.tokens[c] > 0);
+      const total = held.reduce((a, c) => a + pAI.tokens[c], 0);
+      if (total >= 6) {
+        const colors = [];
+        for (const c of held) for (let i = 0; i < pAI.tokens[c] && colors.length < 3; i++) colors.push(c);
+        if (colors.length === 3) preSkills.push({ type: 'psychicConvert', colors });
+      }
+    }
+    if (ask === 'giovanni' && E.COLORS.some(c => pAI.tokens[c] > 0)) {
+      let target = null;
+      s.players.forEach((t, i) => {
+        if (i === pid || !t.board.length) return;
+        t.board.forEach(cid => {
+          const c = s.byId[cid];
+          if (c && (!target || c.vp > target.vp)) target = { toPlayer: i, cardId: cid, vp: c.vp };
+        });
+      });
+      if (target) {
+        const pay = E.COLORS.reduce((a, c) => pAI.tokens[c] > pAI.tokens[a] ? c : a, E.COLORS[0]);
+        preSkills.push({ type: 'intimidate', toPlayer: target.toPlayer, cardId: target.cardId, color: pay });
+      }
+    }
+
     // recompute the concrete discard + evolution plan on the real chosen line
     const c = E.clone(s);
     E.applyAction(c, best);
     const mp = manage(c, cfg);
-    return { action: best, discards: mp.discards, evolution: mp.evolution, megaEvolution: mp.megaEvolution };
+    return { action: best, discards: mp.discards, evolution: mp.evolution, megaEvolution: mp.megaEvolution, preSkills };
   }
 
   // ---- apply a chosen plan to the live state (used headless; UI animates) ----
   function playTurn(s, opts) {
     const plan = chooseTurn(s, opts);
+    if (Array.isArray(plan.preSkills)) for (const pre of plan.preSkills) { try { E.applyAction(s, pre); } catch (e) { } }
     if (plan.action) E.applyAction(s, plan.action);
     else E.actionPass(s); // no legal main action available
     for (const col of plan.discards) E.actionDiscard(s, col);

@@ -167,9 +167,9 @@ test('paymentBreakdown splits required / bonus / token / wildcard per colour', (
   const red = bd.rows.find(r => r.color === 'red');
   const blue = bd.rows.find(r => r.color === 'blue');
   // red: need 3, −1 bonus = 2 left → 1 paid by red token, 1 by master
-  assert.deepStrictEqual(red, { color: 'red', required: 3, bonusCovered: 1, paidColor: 1, paidWild: 1 });
+  assert.deepStrictEqual(red, { color: 'red', required: 3, bonusCovered: 1, paidColor: 1, paidWild: 1, painted: 0 });
   // blue: need 2, no bonus, no blue tokens → both by master
-  assert.deepStrictEqual(blue, { color: 'blue', required: 2, bonusCovered: 0, paidColor: 0, paidWild: 2 });
+  assert.deepStrictEqual(blue, { color: 'blue', required: 2, bonusCovered: 0, paidColor: 0, paidWild: 2, painted: 0 });
   assert.strictEqual(bd.master, 3, '1+2 master balls from stash');
   assert.strictEqual(bd.mandatoryMaster, 0);
 

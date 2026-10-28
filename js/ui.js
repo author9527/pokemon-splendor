@@ -100,13 +100,40 @@
   };
   // 当前操作玩家的技能 id（拿取选择/提示用；me 在下方定义，调用时已初始化）
   const skillOfMe = () => (G && G.trainerSkillsEnabled && E.skillOf) ? E.skillOf(G, me()) : null;
-  // 大师馈赠（娜姿）可用时返回按钮 HTML；否则空串。不占用主行动。
-  const giveMasterBtn = () => {
-    if (!G || !G.trainerSkillsEnabled || G.phase !== 'play' || UI.phase !== 'main') return '';
+  // 训练家主动技能按钮（均不占用主行动，回合内免费动作）。按训练师与持有/场上条件渲染。
+  const skillActionBtns = () => {
+    if (!G || !G.trainerSkillsEnabled || G.phase !== 'play' || UI.phase !== 'main' || G.acted) return '';
     const p = me();
-    if (E.skillOf(G, p) !== 'sabrina' || p.giveUsed || G.supply.purple <= 0) return '';
-    if (!E.COLORS.some(c => p.tokens[c] >= 2)) return '';
-    return `<button class="ghost give-btn" data-act="give-master" title="大师馈赠：消耗2颗同色精灵球，赠送1个大师球给任意其他玩家（整局限1次，不占用主行动）">🤝 赠送大师球</button>`;
+    const sk = E.skillOf(G, p);
+    if (!sk) return '';
+    const btns = [];
+    const ghost = (act, label, title, extra) => {
+      const dis = extra === 'disabled';
+      return `<button class="ghost skill-btn${dis ? ' is-disabled' : ''}" ${dis ? 'disabled' : ''} data-act="${act}" title="${title}">${label}</button>`;
+    };
+    if (sk === 'sabrina') {
+      const nonMaster = E.COLORS.reduce((a, c) => a + p.tokens[c], 0);
+      if (!p.psychicUsed && G.supply.purple > 0 && nonMaster >= 3)
+        btns.push(ghost('psychic-convert', '🌀 超能转换', '超能转换：支付 3 颗任意精灵球，获得 1 颗大师球（每回合限 1 次，不占用主行动）'));
+      if (nonMaster >= 4) {
+        const K = nonMaster >= 10 ? 11 : (nonMaster >= 7 ? nonMaster : nonMaster - 1);
+        btns.push(ghost('suppress', '🧠 精神压制', `精神压制：弃置自己全部非大师球（N=${nonMaster}），并从其他玩家合计弃置 ${K} 颗到公共池（不占用主行动）`));
+      }
+    }
+    if (sk === 'giovanni') {
+      const hasAnyBall = E.COLORS.some(c => p.tokens[c] > 0) || p.tokens.purple > 0;
+      const hasTargets = G.players.some(x => x.id !== p.id && x.board.length);
+      if (hasAnyBall && hasTargets)
+        btns.push(ghost('intimidate', '🛡 威压', '威压：支付 1 颗任意精灵球，标记对方 1 张精灵卡（该精灵进化前需先清除标记，不占用主行动）'));
+      if (hasTargets)
+        btns.push(ghost('purge', '💥 肃清', '肃清：支付目标卡捕捉成本 + 2 大师球，将其移除游戏（对方获 2 颗大师球补偿，不占用主行动）'));
+    }
+    const seals = p.seals || [];
+    if (seals.length) {
+      const ready = seals.some(se => p.tokens[se.color] > 0);
+      btns.push(ghost('clear-seal', '✋ 清除标记', '支付 1 颗同色精灵球清除威压标记，解除进化封锁', ready ? '' : 'disabled'));
+    }
+    return btns.join('');
   };
   const byId = {}; DB.forEach(c => byId[c.id] = c); MEGA_DB.forEach(c => byId[c.id] = c); POKEMART_DB.forEach(c => byId[c.id] = c);
 
@@ -896,38 +923,15 @@
     // Repel (discard_buy) is bought by discarding cards, not balls → no ball ledger.
     if (E.isPokemart(card) && card.effect === 'discard_buy') return '';
     const p = me();
-    const b = E.bonuses(G, p);
-    const rows = [];
-    let wildNeed = 0;
-    for (const c of E.COLORS) {
-      const required = card.cost[c] || 0;
-      if (!required) continue;
-      const bonusCovered = Math.min(required, b[c]);
-      const remaining = required - bonusCovered;
-      const paidColor = Math.min(remaining, p.tokens[c]);
-      rows.push({ color: c, required, bonusCovered, paidColor, paidWild: remaining - paidColor });
-      wildNeed += remaining - paidColor;
-    }
-    const mandatory = card.cost.purple || 0;                 // rare/legend printed Master
+    const sk = (E.skillOf && E.skillOf(G, p)) || null;
     const virtual = info && info.pokedex ? info.pokedex * 2 : 0; // wildcard from discarding 图鉴
-    const masterNeed = wildNeed + mandatory;
-    const masterFromStash = Math.max(0, masterNeed - virtual);
+    const bd = E.paymentBreakdown(G, p, card, virtual);           // null if unaffordable
     const affordable = !!info;
-    const masterShort = Math.max(0, masterNeed - p.tokens.purple - virtual);
-    // 娜姿·意念成球：任意 2 颗普通球可换算 1 颗大师球（每回合限 1 次，整局限 2 次）
-    const wildTwo = (E.skillOf && E.skillOf(G, p)) === 'sabrina' && !p.sabrinaTurn && (p.sabrinaTotal || 0) < 2;
-    let ordinaryLeft = 0;
-    for (const c of E.COLORS) {
-      const row = rows.find(r => r.color === c);
-      ordinaryLeft += p.tokens[c] - (row ? row.paidColor : 0);
-    }
-    const convCap = Math.min(Math.floor(ordinaryLeft / 2), wildTwo ? 1 : 0); // 每回合至多换算 1 个
-    const convUse = affordable ? Math.min(masterShort, convCap) : 0;
-    const masterPaid = masterFromStash - convUse;            // 真实交出的大师球
-    const shortAfterConv = Math.max(0, masterShort - (wildTwo ? convCap : 0));
-    if (!rows.length && !mandatory) return ''; // no ball cost at all
-
+    const mandatory = card.cost.purple || 0;                 // rare/legend printed Master
     const pip = (extra) => `<span class="pip ball ${extra}"></span>`;
+    const rows = bd ? bd.rows : [];
+
+    if (!rows.length && !mandatory) return ''; // no ball cost at all
     let rowsHtml = '';
     for (const r of rows) {
       let pips = '';
@@ -936,10 +940,11 @@
       for (let i = 0; i < r.paidWild; i++) pips += pip('purple pip-wild');
       const disc = r.bonusCovered ? ` <span class="pl-disc">−抵${r.bonusCovered}</span>` : '';
       const wild = r.paidWild ? ` <span class="pl-wild">(${r.paidWild}★)</span>` : '';
+      const paint = r.painted ? ` <span class="pl-wild pl-paint">(蓝球调色×${r.painted})</span>` : '';
       rowsHtml += `<div class="pl-row">
           <span class="pl-name"><span class="ball ${r.color} xs"></span>${BALL_NAMES[r.color]}</span>
           <span class="pl-pips">${pips}</span>
-          <span class="pl-calc">需${r.required}${disc} = 交<b class="pl-pay">${r.paidColor + r.paidWild}</b>${wild}</span>
+          <span class="pl-calc">需${r.required}${disc} = 交<b class="pl-pay">${r.paidColor + r.paidWild}</b>${wild}${paint}</span>
         </div>`;
     }
     if (mandatory) {
@@ -954,19 +959,20 @@
 
     let hoChips = '';
     for (const r of rows) if (r.paidColor) hoChips += `<span class="ho-chip"><span class="ball ${r.color} sm"></span>×${r.paidColor}</span>`;
-    if (masterPaid) hoChips += `<span class="ho-chip ho-master"><span class="ball purple sm"></span>★×${masterPaid}</span>`;
-    if (convUse) hoChips += `<span class="ho-chip ho-conv"><span class="ball pink sm"></span>☆×${convUse}（意念成球）</span>`;
+    if (bd && bd.master) hoChips += `<span class="ho-chip ho-master"><span class="ball purple sm"></span>★×${bd.master}</span>`;
+    if (bd && bd.dragonConverted) hoChips += `<span class="ho-chip ho-conv"><span class="ball red sm"></span>☆×${bd.dragonConverted}（龙之怒）</span>`;
 
     let body;
     if (!affordable) {
-      const convHint = wildTwo ? `（娜姿可用任意 2 颗普通球换算 1 个大师球，还差 <b>${shortAfterConv}</b> 个）` : '';
-      body = `<div class="pl-short">⚠ 还差 <b>${masterShort}</b> 个球才能购买（大师球可抵任意颜色）${convHint}</div>`;
+      const dragonHint = sk === 'lance' ? '（阿渡可用 2 颗同色球换算大师球，仅满足大师球需求）' : '';
+      body = `<div class="pl-short">⚠ 当前资源不足${dragonHint}</div>`;
     } else if (!hoChips) {
       body = `<div class="pl-free">✓ 免费！奖励已全额抵扣，无需交出任何球</div>`;
     } else {
       const vNote = virtual ? `<span class="pl-vnote">（含弃置图鉴抵充 ${virtual}）</span>` : '';
-      const cNote = convUse ? `<span class="pl-vnote">（含意念成球换算 ${convUse} 个大师球）</span>` : '';
-      body = `<div class="handover"><span class="ho-label">你交出</span>${hoChips}<span class="ho-arrow">→ 供应区</span>${vNote}${cNote}</div>`;
+      const dNote = bd && bd.dragonConverted ? `<span class="pl-vnote">（含龙之怒换算 ${bd.dragonConverted} 个大师球）</span>` : '';
+      const mNote = sk === 'misty' ? `<span class="pl-vnote">（蓝球可当任意非大师球使用）</span>` : '';
+      body = `<div class="handover"><span class="ho-label">你交出</span>${hoChips}<span class="ho-arrow">→ 供应区</span>${vNote}${dNote}${mNote}</div>`;
     }
 
     const legend = rows.some(r => r.bonusCovered || r.paidWild)
@@ -1012,18 +1018,15 @@
     const sk = skillOfMe();
     if (UI.pick.length === 0) return true;
     if (distinct.length === 1 && counts[distinct[0]] === 2) {
-      // 岩石意志（小刚）：已成同色一对时，可选第 3 个同色（该色供应 ≥ 3）
-      if (sk === 'brock' && color === distinct[0] && G.supply[color] >= 3) return true;
+      // 花语采集（莉佳）：已成同色一对时，可选 1 个与该色不同色的非大师球
+      if (sk === 'erika' && color !== distinct[0] && G.supply[color] > 0) return true;
       return false;                                                          // already a pair
     }
     if (distinct.length === 1 && counts[distinct[0]] === 1) {
       if (color === distinct[0]) return G.supply[color] >= 4;                // make a pair
-      // 潮汐祝福（小霞）：可选到 4 种不同颜色
-      const maxDistinct = sk === 'misty' ? 4 : 3;
-      return UI.pick.length < maxDistinct && G.supply[color] > 0;            // add distinct
+      return UI.pick.length < 3 && G.supply[color] > 0;                       // add distinct
     }
-    const maxDistinct = sk === 'misty' ? 4 : 3;
-    return UI.pick.length < maxDistinct && !counts[color] && G.supply[color] > 0; // add nth distinct
+    return UI.pick.length < 3 && !counts[color] && G.supply[color] > 0; // add nth distinct
   }
   function validTakeSelection() {
     if (!UI.pick.length) return false;
@@ -1035,15 +1038,14 @@
     const sk = skillOfMe();
     if (validTakeSelection()) return `已组成合法拿取：${UI.pick.length} 个精灵球`;
     if (UI.pick.length === 1) {
-      if (sk === 'brock' && counts[UI.pick[0]] === 1 && G.supply[UI.pick[0]] >= 3)
-        return '再选 1 个同色（岩石意志：该色供应 ≥ 3 可拿 3 个），或换选不同颜色';
       return '再选 2 个不同颜色，或再选 1 个同色（该色供应至少 4）';
     }
     if (UI.pick.length === 2 && distinct === 2) {
-      return sk === 'misty' ? '再选 1 个不同颜色（潮汐祝福可拿 4 个）' : '再选 1 个不同颜色';
+      return '再选 1 个不同颜色';
     }
     if (UI.pick.length === 2 && distinct === 1) {
-      return sk === 'brock' && G.supply[UI.pick[0]] >= 3 ? '可再选 1 个同色（岩石意志，拿 3 个同色）' : '再选 1 个不同颜色';
+      return sk === 'erika' && G.supply[UI.pick[0]] >= 2
+        ? '可再选 1 个不同颜色（花语采集：拿 2 同色 + 1 异色）' : '再选 1 个不同颜色';
     }
     return '请调整已选精灵球';
   }
@@ -1074,8 +1076,11 @@
       let html = '<div class="act-hint">回合结束 · 可进化一只宝可梦（可选，每回合至多1次）：</div>';
       for (const o of opts) {
         const from = byId[o.fromId], to = byId[o.toId];
-        html += `<button class="evo-option" data-evo-from="${o.fromId}" data-evo-to="${o.toId}">
-                   <b>${from.name}</b> → <b>${to.name}</b>（+${to.vp - from.vp}分，需 ${o.count} 个${BALL_NAMES[o.color]}折扣）
+        const costNote = o.bond
+          ? `（羁绊进化：缺口${o.gap}，支付${o.payCount}个${BALL_NAMES[o.color]}补足）`
+          : `（需 ${o.count} 个${BALL_NAMES[o.color]}折扣）`;
+        html += `<button class="evo-option${o.bond ? ' evo-bond' : ''}" data-evo-from="${o.fromId}" data-evo-to="${o.toId}" data-evo-bond="${o.bond ? 1 : 0}">
+                   <b>${from.name}</b> → <b>${to.name}</b>（+${to.vp - from.vp}分，${costNote}）
                  </button>`;
       }
       const mopts = G.megasEnabled ? E.megaEvolveOptions(G, p) : [];
@@ -1095,7 +1100,7 @@
       const ready = validTakeSelection();
       const trayHtml = UI.pick.map((c, i) => `<button class="ball ${c} sm tray-pick" data-unpick="${i}" aria-label="移除已选的${BALL_NAMES[c]}" title="点击移除"></button>`).join('');
       bar.innerHTML = `<div class="act-hint"><b>${takeGuidance()}</b><br><span style="font-size:11px;opacity:.75">点下方已选球可单独撤销</span></div><div class="tray">${trayHtml}</div>
-        <div class="act-buttons"><button class="primary" data-act="confirm-take" ${ready ? '' : 'disabled'}>拿取 ${UI.pick.length} 个</button><button class="ghost" data-act="clear-take">全部取消</button>${giveMasterBtn()}</div>`;
+        <div class="act-buttons"><button class="primary" data-act="confirm-take" ${ready ? '' : 'disabled'}>拿取 ${UI.pick.length} 个</button><button class="ghost" data-act="clear-take">全部取消</button>${skillActionBtns()}</div>`;
       return;
     }
     if (UI.selCard) {
@@ -1128,11 +1133,10 @@
     const sk = skillOfMe();
     const takeHint = !G.trainerSkillsEnabled || !sk
       ? '拿取（3 异色 / 2 同色）'
-      : (sk === 'misty' ? '拿取（4 异色·潮汐祝福 / 3 异色 / 2 同色）'
-        : sk === 'brock' ? '拿取（3 异色 / 3 同色·岩石意志 / 2 同色）'
+      : (sk === 'erika' ? '拿取（3 异色 / 2 同色+1 异色·花语采集）'
         : '拿取（3 异色 / 2 同色）');
-    const give = giveMasterBtn();
-    bar.innerHTML = `<div class="act-hint">轮到你了。请选择一种行动：<br>· 点击精灵球${takeHint}<br>· 点击卡牌进行<b>捕捉</b>或<b>保留</b></div>${give ? `<div class="act-buttons">${give}</div>` : ''}`;
+    const skills = skillActionBtns();
+    bar.innerHTML = `<div class="act-hint">轮到你了。请选择一种行动：<br>· 点击精灵球${takeHint}<br>· 点击卡牌进行<b>捕捉</b>或<b>保留</b></div>${skills ? `<div class="act-buttons">${skills}</div>` : ''}`;
   }
 
   function dedupeEvo(opts) {
@@ -1183,7 +1187,9 @@
         let st = '';
         g.ids.forEach((id, idx) => {
           const mc = byId[id];
-          st += `<div class="mini-card${idx ? ' stacked' : ''}${E.isPokemart(mc) ? ' pm-mini' : ''}" data-zoom="${mc.img}" role="button" tabindex="0" data-focus-key="owned-${i}-${id}" aria-label="查看${mc.name}"><img src="${mc.img}" alt=""></div>`;
+          const seal = (p.seals || []).find(se => se.cardId === id);
+          st += `<div class="mini-card${idx ? ' stacked' : ''}${seal ? ' sealed' : ''}${E.isPokemart(mc) ? ' pm-mini' : ''}" data-zoom="${mc.img}" role="button" tabindex="0" data-focus-key="owned-${i}-${id}" aria-label="查看${mc.name}${seal ? '（被威压标记，进化需先支付1个' + BALL_NAMES[seal.color] + '清除）' : ''}">
+            ${seal ? `<span class="seal-mark" title="威压标记：该精灵无法进化，需先支付 1 个${BALL_NAMES[seal.color]}清除">⛔</span>` : ''}<img src="${mc.img}" alt=""></div>`;
         });
         stacks += `<div class="color-stack"><div class="ministack">${st}</div></div>`;
       }
@@ -1359,8 +1365,13 @@
     if (isOnline()) { if (sendNetAction({ type: 'take', colors }, '正在提交拿取…')) UI.pick = []; render(); return; }
     applyAnimated({ type: 'take', colors }, pid, () => { const r = E.actionTake(G, colors); if (r.ok) UI.pick = []; return r; }, afterMainAction);
   }
-  // 单选列表模态（复用 choice-modal），返回选中 value 或 null
-  function askFromOptions(title, hint, options, confirmLabel) {
+  // 列表选择模态（复用 choice-modal）。
+  // 单选模式（默认）：返回选中的 value 或 null。
+  // 多选模式（extra.multiCount = N）：点击可切换选择，凑满 N 个时确认可用，返回 value 数组。
+  function askFromOptions(title, hint, options, confirmLabel, extra) {
+    extra = extra || {};
+    const multi = extra.multiCount > 1;
+    const opts = options || extra.options || [];
     return new Promise((resolve) => {
       const modal = $('#choice-modal'), confirm = $('#choice-confirm'), cancel = $('#choice-cancel');
       $('#choice-title').textContent = title;
@@ -1368,20 +1379,33 @@
       confirm.textContent = confirmLabel || '确认选择';
       $('#choice-progress').textContent = '';
       const wrap = $('#choice-cards'); wrap.innerHTML = '';
-      let picked = null;
+      let picked = multi ? [] : null;
       const render = () => {
-        confirm.disabled = !picked;
+        if (multi) {
+          confirm.disabled = picked.length !== extra.multiCount;
+          $('#choice-progress').textContent = `已选 ${picked.length}/${extra.multiCount}`;
+        } else {
+          confirm.disabled = !picked;
+        }
         wrap.querySelectorAll('.choice-opt').forEach(x => {
-          const on = x.dataset.value === picked;
+          const on = multi ? picked.indexOf(x.dataset.value) >= 0 : x.dataset.value === picked;
           x.classList.toggle('sel', on);
           x.setAttribute('aria-checked', String(on));
         });
       };
-      options.forEach((o) => {
+      opts.forEach((o) => {
         const el = document.createElement('div');
-        el.className = 'choice-opt'; el.dataset.value = o.value; el.tabIndex = 0; el.setAttribute('role', 'radio');
+        el.className = 'choice-opt'; el.dataset.value = o.value; el.tabIndex = 0;
+        el.setAttribute('role', multi ? 'checkbox' : 'radio');
         el.innerHTML = `${o.pip || ''}<span class="co-label">${o.label}</span>${o.sub ? `<small>${o.sub}</small>` : ''}`;
-        const choose = () => { picked = o.value; render(); };
+        const choose = () => {
+          if (multi) {
+            const i = picked.indexOf(o.value);
+            if (i >= 0) picked.splice(i, 1);
+            else if (picked.length < extra.multiCount) picked.push(o.value);
+          } else picked = o.value;
+          render();
+        };
         el.addEventListener('click', choose);
         el.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); choose(); } });
         wrap.appendChild(el);
@@ -1394,7 +1418,10 @@
         confirm.removeEventListener('click', ok); cancel.removeEventListener('click', no); document.removeEventListener('keydown', onKey);
         resolve(val);
       };
-      const ok = () => { if (picked) close(picked); };
+      const ok = () => {
+        if (multi) { if (picked.length === extra.multiCount) close(picked.slice()); }
+        else if (picked) close(picked);
+      };
       const no = () => close(null);
       confirm.addEventListener('click', ok); cancel.addEventListener('click', no);
       const game = $('#game'); if (game) game.inert = true;
@@ -1402,30 +1429,174 @@
       document.addEventListener('keydown', onKey);
     });
   }
-  // 大师馈赠（娜姿）：选 2 颗同色球 → 选目标 → 赠送 1 大师球（整局限 1 次，不占主行动）
-  async function doGiveMaster() {
-    const p = me();
-    const availColors = E.COLORS.filter(c => p.tokens[c] >= 2);
-    if (!availColors.length || G.supply.purple <= 0) { flashHint('没有足够的同色精灵球可用于赠送'); return; }
-    const color = await askFromOptions('大师馈赠 · 选择精灵球颜色',
-      '消耗 2 颗同色精灵球，兑换 1 颗大师球赠送给其他玩家（整局限 1 次，不占用主行动）',
-      availColors.map(c => ({ value: c, label: `${BALL_NAMES[c]}（持有 ${p.tokens[c]}）`, pip: `<span class="ball ${c} sm"></span>` })),
-      '下一步：选择目标');
-    if (!color) return;
-    const targets = [];
-    for (let i = 0; i < G.players.length; i++) {
-      if (i === p.id) continue;
-      const t = G.players[i];
-      const tt = trainerMeta(t);
-      targets.push({ value: String(i), label: escapeHTML(t.name), sub: `${E.scoreOf(G, t)}分${tt ? ' · ' + tt.title : ''}` });
-    }
-    const toIdx = await askFromOptions('大师馈赠 · 选择赠送目标',
-      '将大师球赠送给这位训练家',
-      targets, '确认赠送');
-    if (toIdx == null) return;
+  // 训练家主动技能（免费动作，不占用主行动）。联机走 sendNetAction，本地走 applyAnimated。
+  function skillAct(action, label) {
     const pid = G.turn;
-    if (isOnline()) { if (sendNetAction({ type: 'giveMaster', toPlayer: +toIdx, color }, '正在提交赠送…')) UI.pick = []; render(); return; }
-    applyAnimated({ type: 'giveMaster', toPlayer: +toIdx, color }, pid, () => E.actionGiveMaster(G, +toIdx, color), () => render());
+    if (isOnline()) { if (sendNetAction(action, label)) render(); return; }
+    applyAnimated(action, pid, () => E.applyAction(G, action), () => render());
+  }
+
+  // 专用选球模态：点击 +1 / −1 凑满 count 颗（每色可重复选），返回颜色数组
+  function pickBalls(count, title, hint) {
+    return new Promise((resolve) => {
+      const modal = $('#choice-modal'), confirm = $('#choice-confirm'), cancel = $('#choice-cancel');
+      $('#choice-title').textContent = title;
+      $('#choice-hint').textContent = hint || '';
+      confirm.textContent = '确认支付';
+      $('#choice-progress').textContent = '';
+      const wrap = $('#choice-cards'); wrap.innerHTML = '';
+      const p = me();
+      const colors = E.COLORS.filter(c => p.tokens[c] > 0);
+      const sel = {}; colors.forEach(c => sel[c] = 0);
+      let total = 0;
+      const render = () => {
+        total = colors.reduce((a, c) => a + sel[c], 0);
+        $('#choice-progress').textContent = `已选 ${total}/${count}`;
+        confirm.disabled = total !== count;
+        wrap.querySelectorAll('.ball-row').forEach(row => {
+          const c = row.dataset.color;
+          row.classList.toggle('sel', sel[c] > 0);
+          row.querySelector('.row-cnt').textContent = sel[c];
+        });
+      };
+      colors.forEach((c) => {
+        const el = document.createElement('div');
+        el.className = 'choice-opt ball-row'; el.dataset.color = c;
+        el.innerHTML = `<span class="ball ${c} sm"></span><span class="co-label">${BALL_NAMES[c]}</span>
+          <button class="row-sub" data-sub="${c}" tabindex="0">−</button><span class="row-cnt">0</span>
+          <button class="row-add" data-add="${c}" tabindex="0">+</button>
+          <small>持有 ${p.tokens[c]}</small>`;
+        el.querySelector('[data-add]').addEventListener('click', (e) => { e.stopPropagation(); if (total < count && sel[c] < p.tokens[c]) { sel[c]++; render(); } });
+        el.querySelector('[data-sub]').addEventListener('click', (e) => { e.stopPropagation(); if (sel[c] > 0) { sel[c]--; render(); } });
+        wrap.appendChild(el);
+      });
+      render();
+      const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); no(); } };
+      const close = (val) => {
+        modal.classList.add('hidden'); document.body.classList.remove('tutorial-choice-open');
+        const game = $('#game'); if (game) game.inert = false;
+        confirm.removeEventListener('click', ok); cancel.removeEventListener('click', no); document.removeEventListener('keydown', onKey);
+        resolve(val);
+      };
+      const ok = () => { if (total === count) { const arr = []; colors.forEach(c => { for (let i = 0; i < sel[c]; i++) arr.push(c); }); close(arr); } };
+      const no = () => close(null);
+      confirm.addEventListener('click', ok); cancel.addEventListener('click', no);
+      const game = $('#game'); if (game) game.inert = true;
+      modal.classList.remove('hidden');
+      document.addEventListener('keydown', onKey);
+    });
+  }
+
+  // 超能转换（娜姿）：选 3 颗任意精灵球 → 换 1 大师球（每回合限 1 次）
+  async function doPsychicConvert() {
+    const p = me();
+    const nonMaster = E.COLORS.reduce((a, c) => a + p.tokens[c], 0);
+    if (nonMaster < 3 || G.supply.purple <= 0) { flashHint('没有足够的精灵球或大师球供应不足'); return; }
+    const chosen = await pickBalls(3, '超能转换 · 选择 3 颗精灵球',
+      '支付 3 颗任意精灵球，获得 1 颗大师球（每回合限 1 次，不占用主行动）');
+    if (!chosen) return;
+    skillAct({ type: 'psychicConvert', colors: chosen }, '正在超能转换…');
+  }
+
+  // 精神压制（娜姿）：自动分配弃置（显示明细后确认）
+  async function doSuppress() {
+    const p = me();
+    const N = E.COLORS.reduce((a, c) => a + p.tokens[c], 0);
+    const K = N >= 10 ? 11 : (N >= 7 ? N : N - 1);
+    const pool = [];
+    G.players.forEach((t, i) => {
+      if (i === p.id) return;
+      E.COLORS.forEach(c => { if (t.tokens[c] > 0) pool.push({ t, i, c, n: t.tokens[c] }); });
+    });
+    pool.sort((a, b) => b.n - a.n);
+    let spent = 0;
+    const alloc = [];
+    for (const it of pool) {
+      if (spent >= K) break;
+      const take = Math.min(it.n, K - spent);
+      alloc.push({ label: `${it.t.name} · ${BALL_NAMES[it.c]}×${take}`, pip: `<span class="ball ${it.c} sm"></span>` });
+      spent += take;
+    }
+    const ok = await askFromOptions('精神压制 · 确认发动',
+      `弃置自己全部 ${N} 颗非大师球；从其他玩家合计弃置 ${spent} 颗（规则上限 ${K}）到公共池`,
+      alloc.map(a => ({ value: 'x', label: a.label, pip: a.pip })), '确认压制');
+    if (!ok) return;
+    skillAct({ type: 'suppress' }, '正在精神压制…');
+  }
+
+  // 威压（坂木）：选目标玩家 → 选卡 → 选球
+  async function doIntimidate() {
+    const p = me();
+    const targetOpts = [];
+    G.players.forEach((t, i) => {
+      if (i === p.id || !t.board.length) return;
+      targetOpts.push({ value: String(i), label: escapeHTML(t.name), sub: `${t.board.length} 张场上精灵` });
+    });
+    if (!targetOpts.length) { flashHint('没有可标记的目标精灵'); return; }
+    const toIdx = await askFromOptions('威压 · 选择目标训练家',
+      '支付 1 颗任意精灵球，标记对方 1 张精灵卡（该精灵进化前需先清除标记）',
+      targetOpts, '下一步：选择精灵');
+    if (toIdx == null) return;
+    const tp = G.players[+toIdx];
+    const cardOpts = tp.board.map(cid => {
+      const c = byId[cid];
+      return { value: cid, label: `${c.name}（${c.vp}分${c.bonus ? ' · ' + BALL_NAMES[c.bonus] + '折' : ''}）` };
+    });
+    const cardId = await askFromOptions('威压 · 选择标记的精灵',
+      '被标记的精灵无法进化，直到其训练家支付 1 颗同色精灵球清除标记',
+      cardOpts, '下一步：选择球色');
+    if (!cardId) return;
+    const held = E.ALL_TOKENS.filter(c => p.tokens[c] > 0);
+    const color = await askFromOptions('威压 · 选择支付的精灵球',
+      '支付后该球进入供应区，标记颜色即清除所需的同色球',
+      held.map(c => ({ value: c, label: BALL_NAMES[c], pip: `<span class="ball ${c} sm"></span>` })), '确认标记');
+    if (!color) return;
+    skillAct({ type: 'intimidate', toPlayer: +toIdx, cardId, color }, '正在威压…');
+  }
+
+  // 肃清（坂木）：选目标玩家 → 选卡 → 确认支付
+  async function doPurge() {
+    const p = me();
+    const targetOpts = [];
+    G.players.forEach((t, i) => {
+      if (i === p.id || !t.board.length) return;
+      targetOpts.push({ value: String(i), label: escapeHTML(t.name), sub: `${t.board.length} 张场上精灵` });
+    });
+    if (!targetOpts.length) { flashHint('没有可肃清的目标精灵'); return; }
+    const toIdx = await askFromOptions('肃清 · 选择目标训练家',
+      '支付目标精灵牌面捕捉成本 + 额外 2 颗大师球（必须实付），将其移除游戏；目标获得 2 颗大师球补偿',
+      targetOpts, '下一步：选择精灵');
+    if (toIdx == null) return;
+    const tp = G.players[+toIdx];
+    const cardOpts = tp.board.map(cid => {
+      const c = byId[cid];
+      return { value: cid, label: `${c.name}（${c.vp}分）`, sub: `${c.bonus ? BALL_NAMES[c.bonus] + '折扣 ' : ''}捕捉成本 ${E.payDesc(c.cost)}` };
+    });
+    const cardId = await askFromOptions('肃清 · 选择要移除的精灵',
+      '你的场上折扣可抵扣其普通球成本；额外 2 颗大师球必须实付',
+      cardOpts, '下一步：确认支付');
+    if (!cardId) return;
+    const pay1 = E.computePayment(G, p, byId[cardId]);
+    const canPurge = pay1.ok && (p.tokens.purple - pay1.pay.purple) >= 2 && G.supply.purple >= 2;
+    if (!canPurge) { flashHint('无法肃清：普通球成本或额外 2 颗大师球不足'); return; }
+    const ok = await askFromOptions('肃清 · 确认支付',
+      `支付 ${E.payDesc(pay1.pay)}+2大师球，将 ${byId[cardId].name} 移除游戏；${tp.name} 获得 2 颗大师球补偿`,
+      [{ value: 'y', label: `确认肃清 ${byId[cardId].name}` }], '确认肃清');
+    if (!ok) return;
+    skillAct({ type: 'purge', toPlayer: +toIdx, cardId }, '正在肃清…');
+  }
+
+  // 清除标记：支付 1 颗同色球（被标记玩家回合内）
+  async function doClearSeal() {
+    const p = me();
+    const seals = p.seals || [];
+    const opts = seals.map(se => ({ value: se.cardId, label: `${byId[se.cardId].name}（需 1 个${BALL_NAMES[se.color]}）` }));
+    if (!opts.length) { flashHint('你场上没有被标记的精灵'); return; }
+    const cardId = await askFromOptions('清除标记',
+      '支付 1 颗同色精灵球清除威压标记，解除该精灵的进化封锁（不占用主行动）',
+      opts, '确认清除');
+    if (!cardId) return;
+    skillAct({ type: 'clearSeal', cardId }, '正在清除标记…');
   }
   function commitCapture(cid, opts) {
     const pid = G.turn;
@@ -1538,6 +1709,17 @@
       if (fo === null) return null;
       Object.assign(opts, fo);
     }
+    // 5) 快龙降临（阿渡）：获得稀有/传说精灵时，任意领取 1 颗非大师球
+    if (E.skillOf(G, p) === 'lance' && (card.tier === 'rare' || card.tier === 'legend')) {
+      const held = E.COLORS.filter(c => G.supply[c] > 0);
+      if (held.length) {
+        const sel = await askFromOptions('快龙降临 · 领取精灵球',
+          '获得稀有/传说宝可梦，额外领取 1 颗非大师球（不占用主行动，随本次获得一起结算）',
+          held.map(c => ({ value: c, label: BALL_NAMES[c], pip: `<span class="ball ${c} sm"></span>` })), '领取');
+        if (!sel) return null;
+        opts.blessColor = sel;
+      }
+    }
     return opts;
   }
   async function gatherFreeTake(parentCard) {
@@ -1561,15 +1743,125 @@
     }
     return { freeTakeId: freeId, freeOpts };
   }
-  function doReserveCard() {
-    const cid = UI.selCard, pid = G.turn;
-    if (isOnline()) { if (sendNetAction({ type: 'reserve', target: { fromField: cid } }, '正在提交保留…')) UI.selCard = null; render(); return; }
-    applyAnimated({ type: 'reserve', cardId: cid }, pid, () => { const r = E.actionReserve(G, { fromField: cid }); if (r.ok) UI.selCard = null; return r; }, afterMainAction);
+  // 潮汐预读（小霞）：保留前可放弃大师球，查看该等级牌堆顶 4 张并自主重排（拿 1 颗蓝球）
+  function reorderTop4(ids, tierLabel) {
+    return new Promise((resolve) => {
+      const modal = $('#choice-modal'), confirm = $('#choice-confirm'), cancel = $('#choice-cancel');
+      $('#choice-title').textContent = '潮汐预读 · 重排牌堆顶';
+      $('#choice-hint').textContent = `查看「${tierLabel}」牌堆顶 ${ids.length} 张，调整顺序后放回（第 1 张为新的最顶）并拿 1 颗蓝球`;
+      confirm.textContent = '放回并保留';
+      $('#choice-progress').textContent = '';
+      const wrap = $('#choice-cards'); wrap.innerHTML = '';
+      let order = ids.slice();
+      const render = () => {
+        confirm.disabled = order.length !== ids.length;
+        wrap.querySelectorAll('.tide-row').forEach(row => {
+          const i = +row.dataset.i;
+          row.querySelector('.tide-pos').textContent = `#${i + 1}`;
+          row.querySelector('[data-up]').disabled = i === 0;
+          row.querySelector('[data-down]').disabled = i === order.length - 1;
+        });
+      };
+      order.forEach((id, i) => {
+        const el = document.createElement('div');
+        el.className = 'choice-opt tide-row'; el.dataset.i = String(i);
+        const c = byId[id];
+        el.innerHTML = `<span class="tide-pos">#${i + 1}</span><span class="co-label">${c.name}<small>${c.tier || ''} · ${c.vp}分</small></span>
+          <button data-up="${i}" tabindex="0">↑</button><button data-down="${i}" tabindex="0">↓</button>`;
+        el.querySelector('[data-up]').addEventListener('click', (e) => {
+          e.stopPropagation();
+          const j = +el.dataset.i; if (j > 0) { const t = order[j - 1]; order[j - 1] = order[j]; order[j] = t; rebuild(); }
+        });
+        el.querySelector('[data-down]').addEventListener('click', (e) => {
+          e.stopPropagation();
+          const j = +el.dataset.i; if (j < order.length - 1) { const t = order[j + 1]; order[j + 1] = order[j]; order[j] = t; rebuild(); }
+        });
+        wrap.appendChild(el);
+      });
+      const rebuild = () => {
+        const cur = order.slice();
+        wrap.innerHTML = '';
+        cur.forEach((id, i) => {
+          const el = document.createElement('div');
+          el.className = 'choice-opt tide-row'; el.dataset.i = String(i);
+          const c = byId[id];
+          el.innerHTML = `<span class="tide-pos">#${i + 1}</span><span class="co-label">${c.name}<small>${c.tier || ''} · ${c.vp}分</small></span>
+            <button data-up="${i}" tabindex="0">↑</button><button data-down="${i}" tabindex="0">↓</button>`;
+          el.querySelector('[data-up]').addEventListener('click', (e) => { e.stopPropagation(); if (i > 0) { const t = order[i - 1]; order[i - 1] = order[i]; order[i] = t; rebuild(); } });
+          el.querySelector('[data-down]').addEventListener('click', (e) => { e.stopPropagation(); if (i < order.length - 1) { const t = order[i + 1]; order[i + 1] = order[i]; order[i] = t; rebuild(); } });
+          wrap.appendChild(el);
+        });
+        render();
+      };
+      render();
+      const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); no(); } };
+      const close = (val) => {
+        modal.classList.add('hidden'); document.body.classList.remove('tutorial-choice-open');
+        const game = $('#game'); if (game) game.inert = false;
+        confirm.removeEventListener('click', ok); cancel.removeEventListener('click', no); document.removeEventListener('keydown', onKey);
+        resolve(val);
+      };
+      const ok = () => { if (order.length === ids.length) close(order.slice()); };
+      const no = () => close(null);
+      confirm.addEventListener('click', ok); cancel.addEventListener('click', no);
+      const game = $('#game'); if (game) game.inert = true;
+      modal.classList.remove('hidden');
+      document.addEventListener('keydown', onKey);
+    });
   }
-  function doReserveDeck() {
+  function tierLabelOf(target) {
+    if (target && target.fromDeck) return E.TIER_NAMES ? E.TIER_NAMES[target.fromDeck] || target.fromDeck : target.fromDeck;
+    if (target && target.fromField) { const c = byId[target.fromField]; return (c && (c.tier || '')) || '该等级'; }
+    return '该等级';
+  }
+  // 联机潮汐预读：请求服务器返回牌堆顶（只对该玩家可见），失败返回 null
+  async function netPeekDeck(target) {
+    if (!window.Net || !Net.peek) return null;
+    return await Net.peek(target);
+  }
+  async function tidePreviewFlow(target) {
+    const p = me();
+    if (E.skillOf(G, p) !== 'misty') return null;      // 非小霞：不询问
+    const tier = tierLabelOf(target);
+    const want = await askFromOptions('潮汐预读 · 是否发动？',
+      `保留时可放弃拿大师球，改为查看「${tier}」牌堆顶 4 张、自主重排后放回，并拿 1 颗蓝球`,
+      [
+        { value: 'y', label: '发动：查看并重排（拿 1 颗蓝球）' },
+        { value: 'n', label: '照常保留（拿 1 颗大师球）' },
+      ], '确认');
+    if (want === 'n') return { skip: true };
+    if (want !== 'y') return null;                       // 取消整个保留
+    let top;
+    if (isOnline()) {
+      const r = await netPeekDeck(target);
+      if (!r || !r.ok) { flashHint('联机预读失败，按普通保留处理'); return { skip: true }; }
+      top = r.top;
+    } else {
+      const r = E.actionReservePreview(G, target);
+      if (!r.ok) { flashHint(r.error || '无法预读，按普通保留处理'); return { skip: true }; }
+      top = r.top;
+    }
+    const order = await reorderTop4(top.map(id => String(id)), tier);
+    if (!order) return null;                             // 取消保留
+    return { preview: { order } };
+  }
+  async function doReserveCard() {
+    const cid = UI.selCard, pid = G.turn;
+    const target = { fromField: cid };
+    const tide = await tidePreviewFlow(target);
+    if (tide === null) { render(); return; }
+    const preview = tide && tide.preview;
+    if (isOnline()) { if (sendNetAction({ type: 'reserve', target, preview }, '正在提交保留…')) UI.selCard = null; render(); return; }
+    applyAnimated({ type: 'reserve', target, preview }, pid, () => { const r = E.actionReserve(G, target, preview); if (r.ok) UI.selCard = null; return r; }, afterMainAction);
+  }
+  async function doReserveDeck() {
     const tier = UI.selDeck, pid = G.turn;
-    if (isOnline()) { if (sendNetAction({ type: 'reserve', target: { fromDeck: tier } }, '正在提交保留…')) UI.selDeck = null; render(); return; }
-    applyAnimated({ type: 'reserve', deck: tier }, pid, () => { const r = E.actionReserve(G, { fromDeck: tier }); if (r.ok) UI.selDeck = null; return r; }, afterMainAction);
+    const target = { fromDeck: tier };
+    const tide = await tidePreviewFlow(target);
+    if (tide === null) { render(); return; }
+    const preview = tide && tide.preview;
+    if (isOnline()) { if (sendNetAction({ type: 'reserve', target, preview }, '正在提交保留…')) UI.selDeck = null; render(); return; }
+    applyAnimated({ type: 'reserve', target, preview }, pid, () => { const r = E.actionReserve(G, target, preview); if (r.ok) UI.selDeck = null; return r; }, afterMainAction);
   }
   function decodePlan(plan) {
     const a = plan && plan.action; if (!a) return { type: 'pass' };
@@ -1738,6 +2030,7 @@
         // normal evolution — no UI bolt-ons, so search and reality stay in sync.
         dec = decodePlan(plan);
         applyFn = () => {
+          if (Array.isArray(plan.preSkills)) for (const pre of plan.preSkills) { try { E.applyAction(G, pre); } catch (e) { } }
           if (plan.action) E.applyAction(G, plan.action); else E.actionPass(G);
           for (const c of plan.discards) E.actionDiscard(G, c);
           if (plan.megaEvolution && !G.evolvedThisTurn) E.actionMegaEvolve(G, plan.megaEvolution.megaId, plan.megaEvolution.fromId);
@@ -2034,7 +2327,11 @@
       const b = e.target.closest('[data-act],[data-discard],[data-evo-from],[data-mega],[data-unpick]'); if (!b) return;
       if (b.dataset.act === 'confirm-take') doTake();
       else if (b.dataset.act === 'clear-take') { UI.pick = []; render(); }
-      else if (b.dataset.act === 'give-master') doGiveMaster();
+      else if (b.dataset.act === 'psychic-convert') doPsychicConvert();
+      else if (b.dataset.act === 'suppress') doSuppress();
+      else if (b.dataset.act === 'intimidate') doIntimidate();
+      else if (b.dataset.act === 'clear-seal') doClearSeal();
+      else if (b.dataset.act === 'purge') doPurge();
       else if (b.dataset.unpick != null) { UI.pick.splice(+b.dataset.unpick, 1); render(); }
       else if (b.dataset.act === 'clear-sel') { UI.selCard = UI.selDeck = null; render(); }
       else if (b.dataset.act === 'capture') doCapture();

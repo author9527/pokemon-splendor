@@ -445,7 +445,9 @@ body.tutorial-choice-open #tut-mask,body.tutorial-choice-open #tut-bubble{visibi
 .pcards{display:flex;gap:6px;flex-wrap:wrap}
 .color-stack{position:relative}
 .color-stack .ministack{display:flex;flex-direction:column}
-.mini-card{width:42px;height:56px;border-radius:5px;overflow:hidden;border:1px solid #000;box-shadow:0 1px 3px rgba(0,0,0,.5);cursor:pointer}
+.mini-card{width:42px;height:56px;border-radius:5px;overflow:hidden;border:1px solid #000;box-shadow:0 1px 3px rgba(0,0,0,.5);cursor:pointer;position:relative}
+.mini-card .seal-mark{position:absolute;top:1px;left:1px;z-index:3;font-size:11px;line-height:1;filter:drop-shadow(0 0 2px rgba(0,0,0,.9));pointer-events:none}
+.mini-card.sealed{outline:2px solid #d61f26;outline-offset:-2px}
 .mini-card img{width:100%;height:100%;object-fit:cover}
 .mini-card.pm-mini img{object-fit:cover;object-position:center;background:#61c9dc}
 .mini-card.stacked{margin-top:-44px}
